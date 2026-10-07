@@ -1,6 +1,6 @@
 import { CURB_W, H, W } from './config';
 import { makeRng, type Rng } from './rng';
-import { wallOffset, type Track, type TrackPoint } from './track';
+import { wallOffset, type Puddle, type Track, type TrackPoint } from './track';
 import type { Vec } from './util';
 
 function makeCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
@@ -19,6 +19,10 @@ export const [skidLayer, skidCtx] = makeCanvas();
 
 /** Floodlight positions for night tracks (lit up by the renderer). */
 export let floodlights: Vec[] = [];
+
+/** Trees and pines whose canopies are animated (swaying) by the scenery module. */
+export interface DecorItem extends Vec { r: number; kind: 'tree' | 'pine'; phase: number }
+export let decor: DecorItem[] = [];
 
 export function clearSkids(): void {
   skidCtx.clearRect(0, 0, W, H);
@@ -119,6 +123,7 @@ export function renderTrackLayer(track: Track): void {
   g.fillStyle = '#d32f2f';
   g.fill();
   fillBand(g, pts, 0, n, neg(half), half, theme.asphalt);
+  drawPuddles(g, track.puddles);
 
   // Asphalt texture.
   for (let i = 0; i < 2500; i++) {
@@ -175,6 +180,7 @@ export function renderTrackLayer(track: Track): void {
 /** Trees, snowy pines or cacti and rocks, kept clear of the track and its walls. */
 function drawDecor(g: CanvasRenderingContext2D, track: Track, rng: Rng): void {
   const { pts, n } = track;
+  decor = [];
   for (let t = 0; t < 40; t++) {
     const x = rng.range(20, W - 20), y = rng.range(20, H - 20);
     const r = rng.range(10, 20);
@@ -184,38 +190,21 @@ function drawDecor(g: CanvasRenderingContext2D, track: Track, rng: Rng): void {
       if (Math.hypot(pts[i].x - x, pts[i].y - y) < wallOffset(pts[i]) + 26) { near = true; break; }
     }
     if (near) continue;
-    if (track.theme.decor === 'pines') drawPine(g, x, y, r);
+    if (track.theme.decor === 'pines') { drawPineShadow(g, x, y, r); decor.push({ x, y, r, kind: 'pine', phase: variant * 6 }); }
     else if (track.theme.decor === 'cacti' && variant < 0.55) drawCactus(g, x, y, r);
     else if (track.theme.decor === 'cacti') drawRock(g, x, y, r * 0.8);
-    else drawTree(g, x, y, r);
+    else { drawTreeShadow(g, x, y, r); decor.push({ x, y, r, kind: 'tree', phase: variant * 6 }); }
   }
 }
 
-function drawTree(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+function drawTreeShadow(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
   g.fillStyle = 'rgba(0,0,0,0.25)';
   g.beginPath(); g.arc(x + 4, y + 5, r, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#2b6b2a';
-  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#3c8a36';
-  g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.55, 0, Math.PI * 2); g.fill();
 }
 
-/** Top-down pine: a dark star of branches with snow on top. */
-function drawPine(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
-  const star = (rad: number, dx: number, dy: number) => {
-    g.beginPath();
-    for (let k = 0; k < 16; k++) {
-      const a = (k / 16) * Math.PI * 2, rr = k % 2 ? rad * 0.6 : rad;
-      if (k) g.lineTo(x + dx + Math.cos(a) * rr, y + dy + Math.sin(a) * rr);
-      else g.moveTo(x + dx + Math.cos(a) * rr, y + dy + Math.sin(a) * rr);
-    }
-    g.closePath();
-    g.fill();
-  };
-  g.fillStyle = 'rgba(60,80,110,0.25)'; star(r, 4, 5);
-  g.fillStyle = '#1f4a33'; star(r, 0, 0);
-  g.fillStyle = '#2d6446'; star(r * 0.6, 0, 0);
-  g.fillStyle = 'rgba(255,255,255,0.85)'; star(r * 0.35, -1, -1);
+function drawPineShadow(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  g.fillStyle = 'rgba(60,80,110,0.25)';
+  g.beginPath(); g.arc(x + 4, y + 5, r * 0.85, 0, Math.PI * 2); g.fill();
 }
 
 function drawCactus(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
@@ -366,5 +355,20 @@ function drawTyreWalls(g: CanvasRenderingContext2D, track: Track): void {
     g.beginPath(); g.arc(t.x, t.y, TYRE_R - 1.8, 0, Math.PI * 2); g.stroke();
     g.fillStyle = '#060606';
     g.beginPath(); g.arc(t.x, t.y, 2.2, 0, Math.PI * 2); g.fill();
+  }
+}
+
+/** Puddles are part of the static track drawing. */
+export function drawPuddles(g: CanvasRenderingContext2D, list: Puddle[]): void {
+  for (const p of list) {
+    g.save();
+    g.translate(p.x, p.y);
+    g.rotate(p.ang);
+    g.fillStyle = 'rgba(30,45,70,0.45)';
+    g.beginPath(); g.ellipse(0, 0, p.rx, p.ry, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(190,210,240,0.25)';
+    g.lineWidth = 1.5;
+    g.beginPath(); g.ellipse(0, 0, p.rx - 2, p.ry - 2, 0, Math.PI * 1.1, Math.PI * 1.7); g.stroke();
+    g.restore();
   }
 }

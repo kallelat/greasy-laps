@@ -1,6 +1,8 @@
 import { CURB_W, H, SPACING, TRACK_W, W } from './config';
 import { makeRng, type Rng } from './rng';
-import { themeFor, type Theme } from './themes';
+import { themeFor, weatherFor, type Theme, type Weather } from './themes';
+
+export type { Weather };
 import { wrapAngle, type Vec } from './util';
 
 export interface TrackPoint extends Vec {
@@ -30,10 +32,19 @@ export interface Bridge extends Vec {
 
 export type Layout = 'loop' | 'figure8';
 
+export interface Puddle extends Vec {
+  rx: number;
+  ry: number;
+  ang: number;
+}
+
 export interface Track {
   seed: number;
   layout: Layout;
   theme: Theme;
+  weather: Weather;
+  /** Rain puddles on the road (empty unless it's raining). */
+  puddles: Puddle[];
   pts: TrackPoint[];
   n: number;
   oils: Oil[];
@@ -286,7 +297,24 @@ export function generateTrack(seed: number): Track {
   }
 
   const [wallRight, wallLeft] = computeWalls(pts);
-  return { seed, layout: bridge ? 'figure8' : 'loop', theme: themeFor(seed), pts, n, oils, wallRight, wallLeft, bridge };
+  const theme = themeFor(seed);
+  const weather = weatherFor(seed, theme);
+  const puddles = weather === 'rain' ? makePuddles(seed, pts) : [];
+  return { seed, layout: bridge ? 'figure8' : 'loop', theme, weather, puddles, pts, n, oils, wallRight, wallLeft, bridge };
+}
+
+/** Puddles on the road for rainy tracks (own random stream, so layouts don't change). */
+function makePuddles(seed: number, pts: TrackPoint[]): Puddle[] {
+  const rng = makeRng(seed ^ 0x68e31da4);
+  const n = pts.length, out: Puddle[] = [];
+  const count = rng.int(5, 8);
+  for (let t = 0; out.length < count && t < 80; t++) {
+    const p = pts[rng.int(Math.floor(n * 0.1), Math.floor(n * 0.95))];
+    if (out.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 120)) continue;
+    const off = rng.range(-0.3, 0.3) * p.w;
+    out.push({ x: p.x + p.nx * off, y: p.y + p.ny * off, rx: rng.range(16, 28), ry: rng.range(9, 15), ang: p.ang + rng.range(-0.4, 0.4) });
+  }
+  return out;
 }
 
 /** Pick which branch goes over, and how much of each branch the bridge spans. */

@@ -57,6 +57,18 @@ export const THEMES: Record<ThemeName, Theme> = {
   },
 };
 
+export type Weather = 'clear' | 'rain' | 'snowfall' | 'heat' | 'fog';
+
+/** Snow always snows, the desert shimmers, night is foggy; grass sometimes rains. */
+export function weatherFor(seed: number, theme: Theme): Weather {
+  switch (theme.name) {
+    case 'snow': return 'snowfall';
+    case 'desert': return 'heat';
+    case 'night': return 'fog';
+    default: return makeRng(seed ^ 0x1b873593).next() < 0.45 ? 'rain' : 'clear';
+  }
+}
+
 const WEIGHTS: [ThemeName, number][] = [['grass', 0.4], ['snow', 0.2], ['desert', 0.2], ['night', 0.2]];
 
 /** The theme belongs to the track code, so a shared link keeps its theme. */

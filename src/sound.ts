@@ -160,6 +160,31 @@ class SoundSystem {
     this.noiseBurst(300, 2600, 1.5, 0.6, 0.45);
   }
 
+  /** Crowd roar: a swell of band-passed noise. */
+  cheer(): void {
+    if (!this.ac || !this.master || !this.noiseBuffer || this.muted) return;
+    const t = this.ac.currentTime;
+    const src = this.ac.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.loop = true;
+    const f = this.ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1100;
+    f.Q.value = 0.8;
+    const g = this.ac.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 3);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t);
+    src.stop(t + 3);
+  }
+
+  /** Firework burst. */
+  pop(): void {
+    this.noiseBurst(1800, 300, 1, 0.35, 0.3);
+  }
+
   /** Wet slap when a car drives into an oil slick. */
   splat(): void {
     this.noiseBurst(1400, 200, 3, 0.25, 0.35);
