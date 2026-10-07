@@ -1,8 +1,11 @@
 import { Car, CAR_DEFS, collideCars } from './car';
-import { DT } from './config';
+import { resetCamera, updateCamera } from './camera';
+import { DT, LAPS } from './config';
+import { banner, celebrate, resetFx, setFxEnabled, slowmo, updateFx } from './fx';
 import { clearSkids, renderTrackLayer } from './layers';
 import { clearParticles, updateParticles } from './particles';
 import { resetPickups, updatePickups, useItem } from './pickups';
+import { exciteCrowd, initScenery, updateScenery } from './scenery';
 import { randomSeed } from './rng';
 import { CPU_SKILL, cycleDifficulty, settings, toggleCatchUp } from './settings';
 import { resetShake, updateShake } from './shake';
@@ -10,6 +13,7 @@ import { copyTrackLink, setUrlSeed } from './share';
 import { sound } from './sound';
 import { generateTrack, type Track } from './track';
 import { clamp } from './util';
+import { initWeather, updateWeather } from './weather';
 
 export type GameState = 'menu' | 'countdown' | 'race' | 'finished';
 export type Mode = 1 | 2; // 1 = vs CPU, 2 = two players
@@ -40,6 +44,8 @@ export class Game {
   /** Short message shown at the bottom of the screen, e.g. "Link copied". */
   toast: { text: string; time: number } | null = null;
   private lastBeep: number | null = null;
+  private lapsSeen = [0, 0];
+  private photoFinishDone = false;
 
   constructor(seed: number = randomSeed()) {
     this.track = this.newTrack(seed);
@@ -82,6 +88,50 @@ export class Game {
     clearParticles();
     resetShake();
     resetPickups(this.track);
+    resetFx();
+    resetCamera();
+    initWeather(this.track);
+    initScenery(this.track);
+    this.lapsSeen = [0, 0];
+    this.photoFinishDone = false;
+  }
+
+  /** Per-frame (real-time) updates for effects that shouldn't slow down in slow motion. */
+  frame(dt: number, t: number): void {
+    updateFx(dt);
+    updateWeather(dt, t);
+    updateScenery(dt, this.cars);
+    const active = this.state === 'race' || this.state === 'countdown';
+    updateCamera(dt, this.cars, this.state === 'finished' ? this.winner : null, active);
+    for (const c of this.cars) {
+      c.lapPop = Math.max(0, c.lapPop - dt);
+      c.itemRoll = Math.max(0, c.itemRoll - dt);
+    }
+    if (this.toast && (this.toast.time -= dt) <= 0) this.toast = null;
+  }
+
+  /** Banners and crowd hype when someone starts a new lap. */
+  private announceLaps(): void {
+    this.cars.forEach((c, i) => {
+      if (c.laps === this.lapsSeen[i]) return;
+      this.lapsSeen[i] = c.laps;
+      c.lapPop = 0.7;
+      exciteCrowd(0.7);
+      if (c.finished) return;
+      const text = c.laps === LAPS - 1 ? `${c.def.name}: FINAL LAP!` : `${c.def.name}: LAP ${c.laps + 1}/${LAPS}`;
+      banner(text, c.def.color);
+    });
+  }
+
+  /** Neck and neck in the last few metres: slow everything down. */
+  private checkPhotoFinish(): void {
+    if (this.photoFinishDone || this.cars.length < 2) return;
+    const goal = LAPS * this.track.n;
+    const [a, b] = [...this.cars].sort((x, y) => y.progress - x.progress);
+    if (goal - a.progress < 30 && a.progress - b.progress < 25) {
+      this.photoFinishDone = true;
+      slowmo(1.6);
+    }
   }
 
   startRace(mode: Mode): void {
@@ -92,6 +142,7 @@ export class Game {
       new Car(CAR_DEFS[1], 1, mode === 1 ? 'cpu' : 'wasd', this.track),
     ];
     this.cars[1].skill = CPU_SKILL[settings.difficulty];
+    setFxEnabled(true);
     this.clock = -3;
     this.lastBeep = null;
     this.winner = null;
@@ -105,6 +156,7 @@ export class Game {
       new Car(CAR_DEFS[0], 0, 'cpu', this.track, true),
       new Car(CAR_DEFS[1], 1, 'cpu', this.track, true),
     ];
+    setFxEnabled(false);
     this.clock = 0;
   }
 
@@ -159,13 +211,16 @@ export class Game {
     updatePickups(this.cars, this.track, racing);
     updateParticles(DT);
     updateShake(DT);
-    if (this.toast && (this.toast.time -= DT) <= 0) this.toast = null;
 
     if (this.state === 'race') {
+      this.announceLaps();
+      this.checkPhotoFinish();
       const done = this.cars.filter(c => c.finished).sort((a, b) => a.finishTime - b.finishTime);
       if (done.length) {
         this.winner = done[0];
         this.state = 'finished';
+        celebrate(this.winner.def.color);
+        exciteCrowd(1);
         sound.beep(660, 0.15);
         setTimeout(() => sound.beep(880, 0.15), 150);
         setTimeout(() => sound.beep(1320, 0.4), 300);

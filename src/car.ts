@@ -1,13 +1,14 @@
 import { CURB_W, DT, H, LAPS, W } from './config';
 import { NO_INPUT, readControls, type Controls } from './input';
 import { skidCtx } from './layers';
-import { spawnParticle, spawnSparks } from './particles';
+import { impact as fxImpact } from './fx';
+import { spawnDrops, spawnParticle, spawnSmoke, spawnSparks } from './particles';
 import { droppedOilsAt, TURBO_POWER, type Item } from './pickups';
-import { addShake } from './shake';
 import { CPU_SKILL, type CpuSkill } from './settings';
 import { sound, type CarVoice } from './sound';
 import { isOnBridge, isUnderBridge, type Track } from './track';
 import { clamp, rand, roundRect, wrapAngle, type Vec } from './util';
+import { inPuddle } from './weather';
 
 export type Controller = 'arrows' | 'wasd' | 'arrows+wasd' | 'cpu';
 
@@ -59,6 +60,14 @@ export class Car {
   itemTime = 0;
   /** > 0 while a turbo is burning. */
   turbo = 0;
+  /** UI animation timers (real seconds): lap-time pop and item "slot machine" roll. */
+  lapPop = 0;
+  itemRoll = 0;
+  /** Body roll, -1..1, leaning with the slide (visual only). */
+  roll = 0;
+  /** Squash-and-stretch spring after impacts (visual only). */
+  private squash = 0;
+  private squashV = 0;
   /** Seconds spent driving backwards along the track. */
   private wrongWayTime = 0;
   /** Seconds spent (nearly) stationary during a race. */
@@ -144,7 +153,10 @@ export class Car {
     const touches = (o: { x: number; y: number; r: number }) => (this.x - o.x) ** 2 + (this.y - o.y) ** 2 < o.r * o.r;
     const inOil = (!this.onBridge && this.track.oils.some(touches)) || droppedOilsAt(this.onBridge).some(touches);
     if (inOil) {
-      if (!this.inOil && !this.silent) sound.splat();
+      if (!this.inOil) {
+        if (!this.silent) sound.splat();
+        spawnDrops(this, 12, '#16121e', 130, { x: this.vx, y: this.vy });
+      }
       this.oilTimer = 0.9;
     }
     this.inOil = inOil;
@@ -162,7 +174,8 @@ export class Car {
     const turbo = this.turbo > 0 ? TURBO_POWER : 0;
     const accel = (onGrass ? surface.offAccel : 440) * power * (1 + turbo); // more power also raises top speed
     const drag = onGrass ? surface.offDrag : 1.05;                          // terminal speed ≈ accel / drag
-    const grip = oily ? 0.5 : onGrass ? surface.offGrip : surface.roadGrip; // lateral grip (per second)
+    const wet = this.track.weather === 'rain' ? 0.85 : 1;                   // rain makes the road slippery
+    const grip = oily ? 0.5 : onGrass ? surface.offGrip : surface.roadGrip * wet; // lateral grip (per second)
 
     if (ctl.throttle) vf += accel * ctl.throttle * DT;
     if (ctl.brake) vf -= (vf > 20 ? 620 : 260) * ctl.brake * DT;
@@ -183,6 +196,11 @@ export class Car {
 
     this.vx = fx * vf + rx * vl;
     this.vy = fy * vf + ry * vl;
+
+    // Visual-only body motion: lean into slides, wobble after hits.
+    this.roll += (clamp(vl / 260, -1, 1) - this.roll) * (1 - Math.exp(-DT * 10));
+    this.squashV += (-260 * this.squash - 14 * this.squashV) * DT;
+    this.squash += this.squashV * DT;
     this.x += this.vx * DT;
     this.y += this.vy * DT;
 
@@ -193,9 +211,12 @@ export class Car {
     this.slip = Math.abs(vl);
     const wheels = this.wheelPositions();
     const hardBraking = ctl.brake > 0 && vf > 150;
-    if (this.wheels && (this.slip > 70 || hardBraking)) {
-      skidCtx.strokeStyle = onGrass ? this.track.theme.offroadSkid : 'rgba(15,15,15,0.28)';
-      skidCtx.lineWidth = 3;
+    const theme = this.track.theme;
+    // Deep snow keeps every tyre track, not just the skids.
+    const snowTracks = theme.name === 'snow' && onGrass && Math.hypot(this.vx, this.vy) > 15;
+    if (this.wheels && (this.slip > 70 || hardBraking || snowTracks)) {
+      skidCtx.strokeStyle = snowTracks ? 'rgba(140,155,185,0.3)' : onGrass ? theme.offroadSkid : 'rgba(15,15,15,0.28)';
+      skidCtx.lineWidth = snowTracks ? 3.5 : 3;
       skidCtx.lineCap = 'round';
       skidCtx.beginPath();
       for (let k = 0; k < 2; k++) {
@@ -207,12 +228,12 @@ export class Car {
     this.wheels = wheels;
     const speed = Math.hypot(this.vx, this.vy);
     const wheel = wheels[Math.random() < 0.5 ? 0 : 1];
-    if (onGrass && speed > 60 && Math.random() < 0.5) spawnParticle(wheel, this.track.theme.offroadDust);
-    else if (!onGrass && this.slip > 120 && Math.random() < 0.35) spawnParticle(wheel, '#cfcfcf');
+    this.emitSmoke(wheel, onGrass, speed, hardBraking);
     if (this.turbo > 0) {
       this.turbo = Math.max(0, this.turbo - DT);
       const exhaust = { x: this.x - Math.cos(this.h) * 18, y: this.y - Math.sin(this.h) * 18 };
       spawnParticle(exhaust, Math.random() < 0.5 ? '#ffb347' : '#ff6a00');
+      if (Math.random() < 0.3) spawnSmoke(exhaust, '#8a8a8a', { x: this.vx, y: this.vy }, 0.6, 0.2);
     }
 
     if (!this.finished && racing) {
@@ -232,6 +253,31 @@ export class Car {
         rumble: onGrass ? clamp(speed / 260, 0, 1) : 0,
       });
     }
+  }
+
+  /** Tyre smoke on the road, powder/sand plumes off it, spray in the rain. */
+  private emitSmoke(wheel: Vec, onGrass: boolean, speed: number, hardBraking: boolean): void {
+    const theme = this.track.theme;
+    const vel = { x: this.vx, y: this.vy };
+    if (!onGrass) {
+      if ((this.slip > 110 || hardBraking) && Math.random() < 0.55) {
+        spawnSmoke(wheel, theme.name === 'snow' ? '#f2f6fc' : '#e4e4e4', vel, 1, 0.28);
+      }
+    } else if (speed > 70) {
+      if (theme.name === 'snow' && Math.random() < 0.6) spawnSmoke(wheel, '#ffffff', vel, 0.9, 0.45);
+      else if (theme.name === 'desert' && Math.random() < 0.6) spawnSmoke(wheel, '#d9b77e', vel, 1.1, 0.35);
+      else if (Math.random() < 0.5) spawnParticle(wheel, theme.offroadDust);
+    }
+    if (this.track.weather === 'rain' && speed > 120 && Math.random() < 0.2) spawnSmoke(wheel, '#d5e2f2', vel, 0.8, 0.16);
+    if (this.track.puddles.length && speed > 60 && inPuddle(this.x, this.y) && Math.random() < 0.6) {
+      spawnDrops(wheel, 3, 'rgba(205,225,255,0.9)', 170, vel);
+      spawnSmoke(wheel, '#dfe9f6', vel, 0.7, 0.25);
+    }
+  }
+
+  /** Kick the squash-and-stretch spring. */
+  bump(force: number): void {
+    this.squashV += force * 9;
   }
 
   private bounceOffScreenEdges(): void {
@@ -324,8 +370,8 @@ export class Car {
     if (impact < 30) return;
     const force = clamp(impact / 400, 0, 1);
     if (!this.silent) sound.hit(force);
-    if (impact > 80) spawnSparks(at, { x: 0, y: 0 }, force);
-    addShake(force);
+    this.bump(force);
+    fxImpact(force, at, { x: 0, y: 0 }, ['#1d1d1f', '#1d1d1f', '#e8e8e8', this.def.color]);
   }
 
   private countLaps(now: number): void {
@@ -383,16 +429,26 @@ export class Car {
     if (this.ghost > 0) g.globalAlpha = 0.35 + 0.25 * Math.sin(this.ghost * 30);
     g.translate(this.x, this.y);
     g.rotate(this.h);
-    // shadow
-    g.fillStyle = 'rgba(0,0,0,0.35)';
-    roundRect(g, -14, -6, 32, 18, 5); g.fill();
+    // Soft shadow, pushed to the outside of the slide as the body rolls.
+    g.drawImage(shadowSprite(), -SHADOW_W / 2 + 3, -SHADOW_H / 2 + 4 - this.roll * 3, SHADOW_W, SHADOW_H);
     // wheels
     g.fillStyle = '#111';
     g.fillRect(-13, -10, 8, 4); g.fillRect(-13, 6, 8, 4);
     g.fillRect(5, -10, 8, 4); g.fillRect(5, 6, 8, 4);
-    // body
+    // Body leans with the roll and squashes on impact.
+    g.translate(0, -this.roll * 1.3);
+    const sq = clamp(this.squash, -0.25, 0.25);
+    g.scale(1 - sq, 1 + sq * 0.9);
     g.fillStyle = this.def.color;
     roundRect(g, -16, -8, 32, 16, 5); g.fill();
+    // Glossy paint: light from the top-left, shade bottom-right.
+    const shine = g.createLinearGradient(-16, -8 + this.roll * 4, 10, 8);
+    shine.addColorStop(0, 'rgba(255,255,255,0.45)');
+    shine.addColorStop(0.4, 'rgba(255,255,255,0)');
+    shine.addColorStop(0.75, 'rgba(0,0,0,0)');
+    shine.addColorStop(1, 'rgba(0,0,0,0.25)');
+    g.fillStyle = shine;
+    g.fill();
     g.lineWidth = 1.5; g.strokeStyle = this.def.dark; g.stroke();
     // racing stripe
     g.fillStyle = 'rgba(255,255,255,0.85)';
@@ -416,6 +472,25 @@ export class Car {
   get underBridge(): boolean {
     return isUnderBridge(this.track, this.idx);
   }
+}
+
+const SHADOW_W = 46, SHADOW_H = 30;
+let shadowCanvas: HTMLCanvasElement | null = null;
+
+/** Blurry car shadow, built once from a few stacked translucent rounded rects. */
+function shadowSprite(): HTMLCanvasElement {
+  if (!shadowCanvas) {
+    shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = SHADOW_W;
+    shadowCanvas.height = SHADOW_H;
+    const g = shadowCanvas.getContext('2d')!;
+    for (let k = 4; k >= 0; k--) {
+      g.fillStyle = 'rgba(0,0,0,0.11)';
+      roundRect(g, 7 - k * 1.5, 7 - k * 1.5, 32 + k * 3, 16 + k * 3, 5 + k * 1.5);
+      g.fill();
+    }
+  }
+  return shadowCanvas;
 }
 
 export function collideCars(a: Car, b: Car): void {
@@ -443,9 +518,8 @@ export function collideCars(a: Car, b: Car): void {
 
   const force = clamp(-rel / 450, 0, 1);
   if (!a.silent || !b.silent) sound.hit(force);
-  if (-rel > 60) {
-    const contact = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    spawnSparks(contact, { x: (a.vx + b.vx) / 2, y: (a.vy + b.vy) / 2 }, force);
-  }
-  addShake(force * 0.8);
+  a.bump(force);
+  b.bump(force);
+  const contact = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  fxImpact(force, contact, { x: (a.vx + b.vx) / 2, y: (a.vy + b.vy) / 2 }, [a.def.color, b.def.color, '#222']);
 }

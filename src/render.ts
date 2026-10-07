@@ -1,13 +1,17 @@
+import { applyCamera } from './camera';
 import { GAME_TITLE, H, LAPS, W } from './config';
+import { drawScreenFx } from './fx';
 import { settings } from './settings';
 import type { Car } from './car';
 import type { Game } from './game';
 import { bridgeLayer, floodlights, skidLayer, trackLayer } from './layers';
-import { drawParticles, drawSparks } from './particles';
-import { activeCrates, drawCrates, drawDroppedOils } from './pickups';
+import { drawParticles, drawSmoke, drawSparks } from './particles';
+import { activeCrates, drawCrates, drawDroppedOils, droppedOilsAt } from './pickups';
+import { drawOilShimmer, drawScenery } from './scenery';
 import { shakeOffset } from './shake';
 import { sound } from './sound';
 import { roundRect } from './util';
+import { drawWeatherAir, drawWeatherGround, drawWeatherScreen } from './weather';
 
 function fmt(t: number | null | undefined): string {
   if (t === null || t === undefined || t < 0) return '--:--.--';
@@ -19,6 +23,9 @@ const ITEM_LABEL = { turbo: 'TURBO', oil: 'OIL DROP' } as const;
 
 export class Renderer {
   private readonly night: CanvasRenderingContext2D;
+  private leader: Car | null = null;
+  private leaderSince = 0;
+  private finishedAt: number | null = null;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {
     const c = document.createElement('canvas');
@@ -29,34 +36,53 @@ export class Renderer {
 
   draw(game: Game, now: number): void {
     const { ctx } = this;
+    const t = now / 1000;
+    const track = game.track;
     // Shake the world (not the HUD); the attract-mode demo behind the menu stays still.
     const shake = game.state === 'menu' ? { x: 0, y: 0 } : shakeOffset();
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, W, H);
     ctx.save();
+    applyCamera(ctx);
     ctx.translate(shake.x, shake.y);
     ctx.drawImage(trackLayer, 0, 0);
+    drawOilShimmer(ctx, t, track.oils);
     ctx.drawImage(skidLayer, 0, 0);
     drawDroppedOils(ctx, false);
-    drawCrates(ctx, now / 1000);
+    drawOilShimmer(ctx, t, droppedOilsAt(false));
+    drawWeatherGround(ctx);
+    const chequered = game.state === 'finished' || game.cars.some(c => c.laps >= LAPS - 1 && game.state === 'race');
+    drawScenery(ctx, t, chequered);
+    drawCrates(ctx, t);
     drawParticles(ctx);
     // Figure-eights: cars on the lower road go under the bridge deck, cars on the deck over it.
     for (const c of game.cars) if (!c.onBridge) c.draw(ctx);
+    drawSmoke(ctx);
     ctx.drawImage(bridgeLayer, 0, 0);
     drawDroppedOils(ctx, true);
+    drawOilShimmer(ctx, t, droppedOilsAt(true));
     for (const c of game.cars) if (c.onBridge) c.draw(ctx);
-    if (game.track.theme.dark) this.drawNight(game.cars);
+    if (track.theme.dark) this.drawNight(game.cars);
+    drawWeatherAir(ctx, t, track);
     drawSparks(ctx);
     if (game.state === 'race') this.drawCarWarnings(game, now);
     ctx.restore();
+    drawWeatherScreen(ctx, t);
 
-    if (game.state === 'menu') this.drawMenu(game);
+    if (game.state === 'menu') this.drawMenu(game, t);
     else {
-      this.drawHud(game);
+      this.drawHud(game, t);
       if (game.state === 'countdown') this.drawCountdown(game.clock);
-      if (game.state === 'race' && game.clock < 0.8) this.text('GO!', W / 2, H / 2, 160, '#66bb6a');
-      if (game.state === 'finished') this.drawFinished(game);
+      if (game.state === 'race' && game.clock < 0.8) {
+        const k = game.clock / 0.8;
+        ctx.globalAlpha = 1 - k * k;
+        this.text('GO!', W / 2, H / 2, 160 + k * 120, '#66bb6a');
+        ctx.globalAlpha = 1;
+      }
+      if (game.state === 'finished') this.drawFinished(game, t);
+      else this.finishedAt = null;
     }
+    drawScreenFx(ctx);
     this.text(this.trackLabel(game), 20, H - 20, 14, 'rgba(255,255,255,0.7)', 'left', '700');
     if (game.toast) {
       this.ctx.globalAlpha = Math.min(1, game.toast.time * 3);
@@ -147,26 +173,48 @@ export class Renderer {
     this.ctx.fill();
   }
 
-  private drawHud(game: Game): void {
+  private drawHud(game: Game, t: number): void {
     const leader = game.cars.slice().sort((a, b) => b.progress - a.progress)[0];
+    if (leader !== this.leader) { this.leader = leader; this.leaderSince = t; }
+    const sinceLead = t - this.leaderSince;
+
     game.cars.forEach((c, i) => {
       const x = i === 0 ? 16 : W - 16 - 250;
       this.panel(x, 14, 250, 118);
       const label = c.controller === 'cpu' ? `${c.def.name} (CPU)` : c.def.name;
       this.text(label, x + 16, 36, 22, c.def.color, 'left');
-      if (game.state === 'race' && c === leader) this.text('P1', x + 234, 36, 22, '#ffd54f', 'right');
+      if (game.state === 'race' && c === leader) {
+        // The P1 badge bounces when the lead changes hands.
+        const bounce = 1 + 0.6 * Math.exp(-sinceLead * 5) * Math.abs(Math.cos(sinceLead * 14));
+        this.text('P1', x + 234, 36, 22 * bounce, '#ffd54f', 'right');
+      }
       const lap = Math.min(c.laps + 1, LAPS);
       this.text(`LAP ${lap}/${LAPS}`, x + 16, 64, 20, '#fff', 'left');
+      // Lap time pops (bigger, yellow) right after crossing the line.
+      const pop = c.lapPop > 0 ? Math.sin((c.lapPop / 0.7) * Math.PI) : 0;
       const cur = game.state === 'race' && !c.finished ? game.clock - c.lapStart : (c.lapTimes[c.lapTimes.length - 1] ?? null);
-      this.text(fmt(cur), x + 234, 64, 20, '#fff', 'right', '700');
+      const shown = c.lapPop > 0 ? c.lapTimes[c.lapTimes.length - 1] : cur;
+      this.text(fmt(shown), x + 234, 64, 20 * (1 + pop * 0.45), pop > 0 ? '#ffe066' : '#fff', 'right', '700');
       this.text(`BEST ${fmt(c.best)}`, x + 16, 90, 15, '#bbb', 'left', '700');
       if (c.turbo > 0) this.text('TURBO!', x + 234, 90, 15, '#ffb347', 'right');
       else if (c.oilTimer > 0) this.text('OIL!', x + 234, 90, 15, '#b388ff', 'right');
-      const item = c.item ? ITEM_LABEL[c.item] : '—';
-      const key = c.controller === 'cpu' || !c.item ? '' : `  [${game.mode === 1 ? '/ or SPACE' : i === 0 ? '/' : 'E'}]`;
-      this.text(`ITEM  ${item}${key}`, x + 16, 116, 15, c.item ? '#ffe066' : '#777', 'left', '700');
+      this.drawItemSlot(game, c, i, x, t);
     });
   }
+
+  /** Item row; spins through the items like a slot machine right after grabbing a crate. */
+  private drawItemSlot(game: Game, c: Car, slot: number, x: number, t: number): void {
+    if (c.itemRoll > 0) {
+      const names = Object.values(ITEM_LABEL);
+      const spin = names[Math.floor(t * 18) % names.length];
+      this.text(`ITEM  ${spin}`, x + 16, 116, 15, `hsl(${(t * 900) % 360},90%,65%)`, 'left', '800');
+      return;
+    }
+    const item = c.item ? ITEM_LABEL[c.item] : '—';
+    const key = c.controller === 'cpu' || !c.item ? '' : `  [${game.mode === 1 ? '/ or SPACE' : slot === 0 ? '/' : 'E'}]`;
+    this.text(`ITEM  ${item}${key}`, x + 16, 116, 15, c.item ? '#ffe066' : '#777', 'left', '700');
+  }
+
 
   /** Floating "WRONG WAY" and respawn hint above cars that are in trouble. */
   private drawCarWarnings(game: Game, now: number): void {
@@ -186,15 +234,17 @@ export class Renderer {
     return `TRACK #${game.track.seed}${kind}  ·  ${game.track.theme.label}`;
   }
 
-  private drawMenu(game: Game): void {
+  private drawMenu(game: Game, t: number): void {
     this.ctx.fillStyle = 'rgba(0,0,0,0.45)';
     this.ctx.fillRect(0, 0, W, H);
-    this.text(GAME_TITLE.toUpperCase(), W / 2, H / 2 - 190, 96, '#ffd54f');
+    // Title bobs gently; the two main options pulse.
+    this.text(GAME_TITLE.toUpperCase(), W / 2, H / 2 - 190 + Math.sin(t * 2) * 5, 96 + Math.sin(t * 2.6) * 2, '#ffd54f');
     this.text(`First to ${LAPS} laps wins`, W / 2, H / 2 - 115, 28, '#fff', 'center', '700');
 
     this.panel(W / 2 - 360, H / 2 - 75, 720, 310);
-    this.text('[1]  Player vs CPU', W / 2, H / 2 - 35, 34);
-    this.text('[2]  Two players', W / 2, H / 2 + 15, 34);
+    const pulse = (k: number) => 34 * (1 + 0.035 * Math.sin(t * 4 + k * Math.PI));
+    this.text('[1]  Player vs CPU', W / 2, H / 2 - 35, pulse(0));
+    this.text('[2]  Two players', W / 2, H / 2 + 15, pulse(1));
     this.text(`[N]  New track      [L]  Copy link to track #${game.track.seed}`, W / 2, H / 2 + 62, 22, '#ccc', 'center', '700');
     const diff = settings.difficulty.toUpperCase();
     const catchUp = settings.catchUp ? 'ON' : 'OFF';
@@ -204,6 +254,7 @@ export class Renderer {
     this.text('Tip: brake + steer at speed to throw the car into a slide. Avoid the oil!', W / 2, H / 2 + 210, 16, '#888', 'center', '600');
   }
 
+
   private drawCountdown(clock: number): void {
     const n = Math.ceil(-clock);
     const frac = -clock - Math.floor(-clock);
@@ -211,12 +262,18 @@ export class Renderer {
     this.text(String(n), W / 2, H / 2, size, n === 1 ? '#66bb6a' : n === 2 ? '#ffca28' : '#ef5350');
   }
 
-  private drawFinished(game: Game): void {
+  private drawFinished(game: Game, t: number): void {
     const winner = game.winner;
     if (!winner) return;
-    this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    if (this.finishedAt === null) this.finishedAt = t;
+    const since = t - this.finishedAt;
+    // Lighter dim than the menu, so the zoom on the winner and the fireworks show through.
+    this.ctx.fillStyle = 'rgba(0,0,0,0.35)';
     this.ctx.fillRect(0, 0, W, H);
-    this.text(`${winner.def.name} WINS!`, W / 2, H / 2 - 120, 100, winner.def.color);
+    // Winner title drops in with an elastic overshoot.
+    const k = Math.min(1, since / 0.8);
+    const elastic = k === 1 ? 1 : 1 - Math.cos(k * Math.PI * 3.5) * Math.exp(-k * 6);
+    this.text(`${winner.def.name} WINS!`, W / 2, H / 2 - 120, 100 * Math.max(0.01, elastic), winner.def.color);
     this.text(`Race time ${fmt(winner.finishTime)}`, W / 2, H / 2 - 40, 30, '#fff', 'center', '700');
     game.cars.forEach((c, i) => {
       const y = H / 2 + 20 + i * 36;
@@ -224,4 +281,5 @@ export class Renderer {
     });
     this.text('ENTER: rematch    N: new track    L: copy link    ESC: menu', W / 2, H / 2 + 140, 22, '#ddd', 'center', '700');
   }
+
 }

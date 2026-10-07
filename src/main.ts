@@ -1,5 +1,6 @@
 import './style.css';
 import { DT, GAME_TITLE, H, W } from './config';
+import { timeScale } from './fx';
 import { Game } from './game';
 import { onKeyPress } from './input';
 import { Renderer } from './render';
@@ -34,8 +35,10 @@ onKeyPress(code => game.handleKey(code));
 let last = performance.now();
 let acc = 0;
 function frame(now: number): void {
-  acc += Math.min(0.1, (now - last) / 1000);
+  const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  acc += dt * timeScale();
+  game.frame(dt, now / 1000);
   while (acc >= DT) { game.step(); acc -= DT; }
   renderer.draw(game, now);
   requestAnimationFrame(frame);

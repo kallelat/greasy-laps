@@ -61,6 +61,7 @@ export function updatePickups(cars: Car[], track: Track, racing: boolean): void 
       if (Math.hypot(car.x - c.x, car.y - c.y) > PICKUP_RADIUS) continue;
       car.item = Math.random() < 0.5 ? 'turbo' : 'oil';
       car.itemTime = 0;
+      car.itemRoll = 0.7;
       c.respawn = CRATE_RESPAWN;
       if (!car.silent) sound.pickup();
       break;
