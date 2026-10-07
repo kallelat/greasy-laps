@@ -1,5 +1,6 @@
 import { CURB_W, H, SPACING, TRACK_W, W } from './config';
 import { makeRng, type Rng } from './rng';
+import { themeFor, type Theme } from './themes';
 import { wrapAngle, type Vec } from './util';
 
 export interface TrackPoint extends Vec {
@@ -32,6 +33,7 @@ export type Layout = 'loop' | 'figure8';
 export interface Track {
   seed: number;
   layout: Layout;
+  theme: Theme;
   pts: TrackPoint[];
   n: number;
   oils: Oil[];
@@ -284,7 +286,7 @@ export function generateTrack(seed: number): Track {
   }
 
   const [wallRight, wallLeft] = computeWalls(pts);
-  return { seed, layout: bridge ? 'figure8' : 'loop', pts, n, oils, wallRight, wallLeft, bridge };
+  return { seed, layout: bridge ? 'figure8' : 'loop', theme: themeFor(seed), pts, n, oils, wallRight, wallLeft, bridge };
 }
 
 /** Pick which branch goes over, and how much of each branch the bridge spans. */

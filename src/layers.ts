@@ -1,6 +1,7 @@
 import { CURB_W, H, W } from './config';
 import { makeRng, type Rng } from './rng';
 import { wallOffset, type Track, type TrackPoint } from './track';
+import type { Vec } from './util';
 
 function makeCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
@@ -15,6 +16,9 @@ export const [trackLayer, trackCtx] = makeCanvas();
 export const [bridgeLayer, bridgeCtx] = makeCanvas();
 /** Persistent skid marks drawn by the cars. */
 export const [skidLayer, skidCtx] = makeCanvas();
+
+/** Floodlight positions for night tracks (lit up by the renderer). */
+export let floodlights: Vec[] = [];
 
 export function clearSkids(): void {
   skidCtx.clearRect(0, 0, W, H);
@@ -80,19 +84,24 @@ export function renderTrackLayer(track: Track): void {
   // Separate stream from generation, so decoration tweaks never change track layouts.
   const rng = makeRng(track.seed ^ 0x5bd1e995);
 
-  // Grass with mowing stripes and noise.
-  g.fillStyle = '#3f8f3a';
+  const theme = track.theme;
+
+  // Ground: colour, optional mowing stripes, noise.
+  g.fillStyle = theme.ground;
   g.fillRect(0, 0, W, H);
-  for (let x = 0; x < W; x += 80) {
-    g.fillStyle = (x / 80) % 2 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.035)';
-    g.fillRect(x, 0, 80, H);
+  if (theme.stripes) {
+    for (let x = 0; x < W; x += 80) {
+      g.fillStyle = (x / 80) % 2 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.035)';
+      g.fillRect(x, 0, 80, H);
+    }
   }
   for (let i = 0; i < 9000; i++) {
-    g.fillStyle = rng.next() < 0.5 ? 'rgba(20,60,20,0.25)' : 'rgba(140,200,110,0.18)';
+    g.fillStyle = theme.groundNoise[rng.next() < 0.5 ? 0 : 1];
     g.fillRect(rng.next() * W, rng.next() * H, 2, 2);
   }
+  if (theme.name === 'desert') drawDunes(g, rng);
 
-  drawTrees(g, track, rng);
+  drawDecor(g, track, rng);
 
   // Run-off shadow, curbs (red/white), asphalt.
   const curbOut: Offset = p => half(p) + CURB_W;
@@ -109,7 +118,7 @@ export function renderTrackLayer(track: Track): void {
   }
   g.fillStyle = '#d32f2f';
   g.fill();
-  fillBand(g, pts, 0, n, neg(half), half, '#555a60');
+  fillBand(g, pts, 0, n, neg(half), half, theme.asphalt);
 
   // Asphalt texture.
   for (let i = 0; i < 2500; i++) {
@@ -134,6 +143,7 @@ export function renderTrackLayer(track: Track): void {
   }
 
   drawTyreWalls(g, track);
+  floodlights = theme.dark ? drawFloodlights(g, track) : [];
 
   // Oil slicks.
   for (const o of oils) {
@@ -162,23 +172,107 @@ export function renderTrackLayer(track: Track): void {
   renderBridgeLayer(track);
 }
 
-function drawTrees(g: CanvasRenderingContext2D, track: Track, rng: Rng): void {
+/** Trees, snowy pines or cacti and rocks, kept clear of the track and its walls. */
+function drawDecor(g: CanvasRenderingContext2D, track: Track, rng: Rng): void {
   const { pts, n } = track;
   for (let t = 0; t < 40; t++) {
     const x = rng.range(20, W - 20), y = rng.range(20, H - 20);
     const r = rng.range(10, 20);
+    const variant = rng.next();
     let near = false;
     for (let i = 0; i < n; i += 3) {
       if (Math.hypot(pts[i].x - x, pts[i].y - y) < wallOffset(pts[i]) + 26) { near = true; break; }
     }
     if (near) continue;
-    g.fillStyle = 'rgba(0,0,0,0.25)';
-    g.beginPath(); g.arc(x + 4, y + 5, r, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#2b6b2a';
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#3c8a36';
-    g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.55, 0, Math.PI * 2); g.fill();
+    if (track.theme.decor === 'pines') drawPine(g, x, y, r);
+    else if (track.theme.decor === 'cacti') variant < 0.55 ? drawCactus(g, x, y, r) : drawRock(g, x, y, r * 0.8);
+    else drawTree(g, x, y, r);
   }
+}
+
+function drawTree(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  g.fillStyle = 'rgba(0,0,0,0.25)';
+  g.beginPath(); g.arc(x + 4, y + 5, r, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#2b6b2a';
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#3c8a36';
+  g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.55, 0, Math.PI * 2); g.fill();
+}
+
+/** Top-down pine: a dark star of branches with snow on top. */
+function drawPine(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  const star = (rad: number, dx: number, dy: number) => {
+    g.beginPath();
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2, rr = k % 2 ? rad * 0.6 : rad;
+      if (k) g.lineTo(x + dx + Math.cos(a) * rr, y + dy + Math.sin(a) * rr);
+      else g.moveTo(x + dx + Math.cos(a) * rr, y + dy + Math.sin(a) * rr);
+    }
+    g.closePath();
+    g.fill();
+  };
+  g.fillStyle = 'rgba(60,80,110,0.25)'; star(r, 4, 5);
+  g.fillStyle = '#1f4a33'; star(r, 0, 0);
+  g.fillStyle = '#2d6446'; star(r * 0.6, 0, 0);
+  g.fillStyle = 'rgba(255,255,255,0.85)'; star(r * 0.35, -1, -1);
+}
+
+function drawCactus(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  g.lineCap = 'round';
+  g.strokeStyle = 'rgba(90,60,20,0.3)';
+  g.lineWidth = r * 0.55;
+  g.beginPath(); g.moveTo(x + 4 - r * 0.7, y + 5); g.lineTo(x + 4 + r * 0.7, y + 5); g.stroke();
+  g.strokeStyle = '#4c8a3c';
+  g.beginPath(); g.moveTo(x - r * 0.7, y); g.lineTo(x + r * 0.7, y); g.stroke();
+  g.beginPath(); g.moveTo(x - r * 0.3, y); g.lineTo(x - r * 0.3, y - r * 0.6); g.stroke();
+  g.beginPath(); g.moveTo(x + r * 0.35, y); g.lineTo(x + r * 0.35, y + r * 0.55); g.stroke();
+  g.fillStyle = '#6fb35a';
+  g.beginPath(); g.arc(x, y, r * 0.2, 0, Math.PI * 2); g.fill();
+}
+
+function drawRock(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  g.fillStyle = 'rgba(90,60,20,0.3)';
+  g.beginPath(); g.ellipse(x + 4, y + 4, r, r * 0.75, 0.4, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#9b8466';
+  g.beginPath(); g.ellipse(x, y, r, r * 0.75, 0.4, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#b8a283';
+  g.beginPath(); g.ellipse(x - r * 0.25, y - r * 0.2, r * 0.5, r * 0.35, 0.4, 0, Math.PI * 2); g.fill();
+}
+
+/** Soft wind-blown ripples in the sand. */
+function drawDunes(g: CanvasRenderingContext2D, rng: Rng): void {
+  g.strokeStyle = 'rgba(160,120,60,0.18)';
+  g.lineWidth = 3;
+  for (let i = 0; i < 70; i++) {
+    const x = rng.range(-50, W), y = rng.range(0, H), len = rng.range(60, 160);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.quadraticCurveTo(x + len / 2, y - rng.range(6, 14), x + len, y);
+    g.stroke();
+  }
+}
+
+/** Light poles just outside the walls, evenly spaced around the lap. */
+function drawFloodlights(g: CanvasRenderingContext2D, track: Track): Vec[] {
+  const { pts, n } = track;
+  const lights: Vec[] = [];
+  const count = 7;
+  for (let k = 0; k < count; k++) {
+    const i = Math.floor(((k + 0.5) / count) * n);
+    const p = pts[i], side = k % 2 ? 1 : -1;
+    const off = (side > 0 ? track.wallRight[i] : track.wallLeft[i]) + 14;
+    const q = { x: p.x + p.nx * side * off, y: p.y + p.ny * side * off };
+    // Don't plant a pole on another stretch of road.
+    if (pts.some(o => Math.hypot(o.x - q.x, o.y - q.y) < o.w / 2 + CURB_W + 6)) continue;
+    lights.push(q);
+    g.fillStyle = 'rgba(0,0,0,0.4)';
+    g.beginPath(); g.arc(q.x + 3, q.y + 4, 6, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#9aa3ad';
+    g.beginPath(); g.arc(q.x, q.y, 5, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff8d0';
+    g.beginPath(); g.arc(q.x, q.y, 2.5, 0, Math.PI * 2); g.fill();
+  }
+  return lights;
 }
 
 function drawStartLine(g: CanvasRenderingContext2D, s: TrackPoint): void {
