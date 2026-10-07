@@ -1,0 +1,114 @@
+import { Car, CAR_DEFS, collideCars } from './car';
+import { DT } from './config';
+import { clearSkids, renderTrackLayer } from './layers';
+import { clearParticles, updateParticles } from './particles';
+import { resetShake, updateShake } from './shake';
+import { sound } from './sound';
+import { generateTrack, type Track } from './track';
+
+export type GameState = 'menu' | 'countdown' | 'race' | 'finished';
+export type Mode = 1 | 2; // 1 = vs CPU, 2 = two players
+
+export class Game {
+  state: GameState = 'menu';
+  mode: Mode = 2;
+  track: Track;
+  cars: Car[] = [];
+  clock = 0;               // seconds since race start (negative during countdown)
+  winner: Car | null = null;
+  private lastBeep: number | null = null;
+
+  constructor() {
+    this.track = this.newTrack();
+    this.startDemo();
+  }
+
+  private newTrack(): Track {
+    const track = generateTrack();
+    renderTrackLayer(track);
+    clearSkids();
+    this.track = track;
+    return track;
+  }
+
+  private resetScene(): void {
+    sound.stopCarVoices();
+    clearSkids();
+    clearParticles();
+    resetShake();
+  }
+
+  startRace(mode: Mode): void {
+    this.mode = mode;
+    this.resetScene();
+    this.cars = [
+      new Car(CAR_DEFS[0], 0, mode === 1 ? 'arrows+wasd' : 'arrows', this.track),
+      new Car(CAR_DEFS[1], 1, mode === 1 ? 'cpu' : 'wasd', this.track),
+    ];
+    this.clock = -3;
+    this.lastBeep = null;
+    this.winner = null;
+    this.state = 'countdown';
+  }
+
+  /** Two silent CPU cars race behind the menu as an attract mode. */
+  private startDemo(): void {
+    this.resetScene();
+    this.cars = [
+      new Car(CAR_DEFS[0], 0, 'cpu', this.track, true),
+      new Car(CAR_DEFS[1], 1, 'cpu', this.track, true),
+    ];
+    this.clock = 0;
+  }
+
+  private toMenu(): void {
+    this.state = 'menu';
+    this.startDemo();
+  }
+
+  handleKey(code: string): void {
+    if (code === 'KeyM') { sound.muted = !sound.muted; return; }
+    if (this.state === 'menu') {
+      if (code === 'Digit1' || code === 'Numpad1') this.startRace(1);
+      else if (code === 'Digit2' || code === 'Numpad2') this.startRace(2);
+      else if (code === 'KeyN') { this.newTrack(); this.startDemo(); }
+    } else if (this.state === 'finished') {
+      if (code === 'Enter' || code === 'Space') this.startRace(this.mode);
+      else if (code === 'KeyN') { this.newTrack(); this.startRace(this.mode); }
+      else if (code === 'Escape') this.toMenu();
+    } else if (code === 'Escape') {
+      this.toMenu();
+    }
+  }
+
+  step(): void {
+    if (this.state !== 'finished') this.clock += DT;
+    if (this.state === 'countdown') {
+      const sec = Math.ceil(-this.clock);
+      if (sec !== this.lastBeep && sec > 0) { sound.beep(440, 0.18); this.lastBeep = sec; }
+      if (this.clock >= 0) {
+        this.state = 'race';
+        sound.beep(880, 0.35);
+        for (const c of this.cars) c.lapStart = 0;
+      }
+    }
+
+    const racing = this.state === 'race' || this.state === 'menu';
+    if (this.state === 'menu' && this.cars.some(c => c.finished)) this.startDemo();
+    for (const c of this.cars) c.update(this.clock, racing);
+    if (this.cars.length === 2) collideCars(this.cars[0], this.cars[1]);
+    updateParticles(DT);
+    updateShake(DT);
+
+    if (this.state === 'race') {
+      const done = this.cars.filter(c => c.finished).sort((a, b) => a.finishTime - b.finishTime);
+      if (done.length) {
+        this.winner = done[0];
+        this.state = 'finished';
+        sound.beep(660, 0.15);
+        setTimeout(() => sound.beep(880, 0.15), 150);
+        setTimeout(() => sound.beep(1320, 0.4), 300);
+      }
+    }
+  }
+}

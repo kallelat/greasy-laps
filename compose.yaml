@@ -1,0 +1,22 @@
+services:
+  # Production build served by nginx: http://localhost:8080
+  game:
+    build: .
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  # Dev server with hot reload: docker compose --profile dev up dev
+  # → http://localhost:5173
+  dev:
+    profiles: [dev]
+    image: node:24-alpine
+    working_dir: /app
+    command: sh -c "corepack enable && yarn install && yarn dev --host 0.0.0.0"
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
