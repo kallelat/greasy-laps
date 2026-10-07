@@ -43,6 +43,11 @@ export function updateCamera(dt: number, cars: Car[], focus: Car | null, active:
   cam.y = clamp(cam.y, hh, H - hh);
 }
 
+/** Where a world point currently appears on screen. */
+export function worldToScreen(p: { x: number; y: number }): { x: number; y: number } {
+  return { x: (p.x - cam.x) * cam.zoom + W / 2, y: (p.y - cam.y) * cam.zoom + H / 2 };
+}
+
 export function applyCamera(g: CanvasRenderingContext2D): void {
   g.translate(W / 2, H / 2);
   g.scale(cam.zoom, cam.zoom);

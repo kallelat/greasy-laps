@@ -1,4 +1,4 @@
-import { applyCamera } from './camera';
+import { applyCamera, worldToScreen } from './camera';
 import { GAME_TITLE, H, LAPS, W } from './config';
 import { drawScreenFx } from './fx';
 import { settings } from './settings';
@@ -180,6 +180,12 @@ export class Renderer {
 
     game.cars.forEach((c, i) => {
       const x = i === 0 ? 16 : W - 16 - 250;
+      // Fade the panel out while a car drives underneath it.
+      const covered = game.cars.some(o => {
+        const s = worldToScreen(o);
+        return s.x > x - 20 && s.x < x + 270 && s.y < 152;
+      });
+      this.ctx.globalAlpha = covered ? 0.3 : 1;
       this.panel(x, 14, 250, 118);
       const label = c.controller === 'cpu' ? `${c.def.name} (CPU)` : c.def.name;
       this.text(label, x + 16, 36, 22, c.def.color, 'left');
@@ -199,6 +205,7 @@ export class Renderer {
       if (c.turbo > 0) this.text('TURBO!', x + 234, 90, 15, '#ffb347', 'right');
       else if (c.oilTimer > 0) this.text('OIL!', x + 234, 90, 15, '#b388ff', 'right');
       this.drawItemSlot(game, c, i, x, t);
+      this.ctx.globalAlpha = 1;
     });
   }
 
@@ -231,7 +238,8 @@ export class Renderer {
 
   private trackLabel(game: Game): string {
     const kind = game.track.layout === 'figure8' ? '  ·  FIGURE-8' : '';
-    return `TRACK #${game.track.seed}${kind}  ·  ${game.track.theme.label}`;
+    const rain = game.track.weather === 'rain' ? '  ·  RAIN' : '';
+    return `TRACK #${game.track.seed}${kind}  ·  ${game.track.theme.label}${rain}`;
   }
 
   private drawMenu(game: Game, t: number): void {

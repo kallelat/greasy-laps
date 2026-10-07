@@ -73,9 +73,10 @@ Tips:
   - **Turbo:** 1.6 seconds of extra power and top speed. Save it for a straight.
   - **Oil drop:** leaves an oil slick behind you for 12 seconds. Use it when someone is right on your tail.
 - Each theme drives differently:
-  - **Snow:** less grip on the road, and deep snow off it.
-  - **Desert:** sand slows you down even more than grass.
-  - **Night:** you only see what your headlights and the floodlights light up.
+  - **Snow:** less grip on the road, and deep snow off it that keeps your tyre tracks. Snow falls throughout.
+  - **Desert:** sand slows you down even more than grass. Heat shimmer and the odd tumbleweed.
+  - **Night:** you only see what your headlights and the floodlights light up, through drifting fog.
+  - **Rain:** some grass tracks are wet. The road is a bit slippery, and puddles throw up spray.
 
   The theme belongs to the track code, so a shared link keeps it.
 - On figure-eights, the cars on the bridge and the cars underneath can't hit each other.
@@ -101,7 +102,11 @@ src/
   render.ts     HUD, menus and the per-frame drawing
   sound.ts      Web Audio synth: engines, beeps, thuds
   input.ts      Keyboard state and per-player controls
-  particles.ts  Dust and tyre smoke
+  particles.ts  Tyre smoke, dust, sparks, droplets and debris
+  fx.ts         Impacts, flash, slow motion, lap banners, confetti and fireworks
+  camera.ts     Gentle zoom/pan towards the action, zoom on the winner
+  weather.ts    Rain, snowfall, heat shimmer, tumbleweeds, night fog and light shafts
+  scenery.ts    Swaying trees, cheering grandstand, marshal flags, oil shimmer
   settings.ts   CPU difficulty and catch-up settings (saved in localStorage)
   shake.ts      Screen shake
   config.ts     Game title and tuning constants
