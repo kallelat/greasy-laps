@@ -150,6 +150,16 @@ class SoundSystem {
     if (f > 0.25) this.noiseBurst(3000, 900, 2, 0.12 + f * 0.15, f * 0.5);
   }
 
+  /** Rising arpeggio for grabbing a crate. */
+  pickup(): void {
+    [660, 880, 1320].forEach((f, i) => setTimeout(() => this.beep(f, 0.08, 'triangle', 0.18), i * 55));
+  }
+
+  /** Turbo: a rising rush of filtered noise. */
+  whoosh(): void {
+    this.noiseBurst(300, 2600, 1.5, 0.6, 0.45);
+  }
+
   /** Wet slap when a car drives into an oil slick. */
   splat(): void {
     this.noiseBurst(1400, 200, 3, 0.25, 0.35);

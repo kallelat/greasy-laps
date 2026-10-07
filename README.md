@@ -2,7 +2,7 @@
 
 A top-down arcade racer for one or two players that runs in the browser. Every race is on a randomly generated track, and the first car to finish 5 laps wins.
 
-Tracks are loops or figure-eights with a bridge, with wider and narrower stretches. Each track has a code, such as `#482113`. Open the game at `…/#482113`, or press `L` to copy a link, and anyone gets exactly the same track.
+Tracks are loops or figure-eights with a bridge, with wider and narrower stretches, in one of four themes: grass, snow, desert or night. Each track has a code, such as `#482113`. Open the game at `…/#482113`, or press `L` to copy a link, and anyone gets exactly the same track.
 
 Built with TypeScript and an HTML canvas, bundled with [Vite](https://vite.dev). There are no runtime dependencies, and every sound is synthesized with the Web Audio API.
 
@@ -50,9 +50,10 @@ yarn dev           # dev server at http://localhost:5173
 | Accelerate        | `↑`          | `W`     |
 | Brake / reverse   | `↓`          | `S`     |
 | Steer             | `←` `→`      | `A` `D` |
+| Use item          | `/` or `.`   | `E`     |
 | Respawn           | Right `Shift` or `Enter` | Left `Shift` or `Q` |
 
-On the menu, press `1` for player vs CPU or `2` for two players on one keyboard. In player-vs-CPU mode, Red can use either the arrow keys or WASD.
+On the menu, press `1` for player vs CPU or `2` for two players on one keyboard. In player-vs-CPU mode, Red can use either key set, and `Space` also uses the item.
 
 | Key     | Where          | Action                         |
 | ------- | -------------- | ------------------------------ |
@@ -68,6 +69,15 @@ Tips:
 - Braking and steering together at speed throws the car into a slide.
 - Grass slows you down a lot, so stay on the asphalt.
 - Oil slicks take away almost all grip for about a second.
+- Drive through a **? crate** to get an item. You can hold one at a time, and the crate comes back after 4 seconds.
+  - **Turbo:** 1.6 seconds of extra power and top speed. Save it for a straight.
+  - **Oil drop:** leaves an oil slick behind you for 12 seconds. Use it when someone is right on your tail.
+- Each theme drives differently:
+  - **Snow:** less grip on the road, and deep snow off it.
+  - **Desert:** sand slows you down even more than grass.
+  - **Night:** you only see what your headlights and the floodlights light up.
+
+  The theme belongs to the track code, so a shared link keeps it.
 - On figure-eights, the cars on the bridge and the cars underneath can't hit each other.
 - The track is lined with tyre walls. Hitting them hard bounces you off and costs speed.
 - If you spin out, get stuck or drive the wrong way, press your respawn key. You go back on the track a few metres behind where you were, see-through for 1.5 seconds so you can't be hit. You can respawn at most once every 2 seconds. CPU cars respawn on their own.
@@ -83,6 +93,8 @@ src/
   game.ts       Game state machine (menu → countdown → race → finished)
   car.ts        Car physics, CPU driver, lap counting, car-to-car collisions
   track.ts      Track generation from a seed: loops, figure-eights, bridges, walls
+  themes.ts     Grass, snow, desert and night: colours, scenery, handling
+  pickups.ts    Crates, items (turbo, oil drop) and the CPU's item use
   rng.ts        Seeded random numbers, so a track code always gives the same track
   share.ts      Track code in the URL and copy-link
   layers.ts     Pre-rendered scenery, bridge deck and the persistent skid-mark layer

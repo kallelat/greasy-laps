@@ -2,6 +2,7 @@ import { Car, CAR_DEFS, collideCars } from './car';
 import { DT } from './config';
 import { clearSkids, renderTrackLayer } from './layers';
 import { clearParticles, updateParticles } from './particles';
+import { resetPickups, updatePickups, useItem } from './pickups';
 import { randomSeed } from './rng';
 import { CPU_SKILL, cycleDifficulty, settings, toggleCatchUp } from './settings';
 import { resetShake, updateShake } from './shake';
@@ -17,6 +18,12 @@ export type Mode = 1 | 2; // 1 = vs CPU, 2 = two players
 export const RESPAWN_KEYS: readonly (readonly string[])[] = [
   ['ShiftRight', 'Enter', 'NumpadEnter'],
   ['ShiftLeft', 'KeyQ'],
+];
+
+/** Use-item keys per car slot. In vs-CPU mode the human can use either set (or Space). */
+export const FIRE_KEYS: readonly (readonly string[])[] = [
+  ['Slash', 'Period'],
+  ['KeyE'],
 ];
 
 /** Max extra engine power for the trailing car, reached when it is this far behind. */
@@ -55,6 +62,11 @@ export class Game {
     this.toMenu();
   }
 
+  /** The human-driven car a key set belongs to (in vs-CPU mode, every key set drives Red). */
+  private humanCar(slot: number): Car | undefined {
+    return this.mode === 1 ? this.cars[0] : this.cars[slot];
+  }
+
   private showToast(text: string): void {
     this.toast = { text, time: 2.5 };
   }
@@ -69,6 +81,7 @@ export class Game {
     clearSkids();
     clearParticles();
     resetShake();
+    resetPickups(this.track);
   }
 
   startRace(mode: Mode): void {
@@ -111,9 +124,11 @@ export class Game {
       else if (code === 'KeyL') void this.copyLink();
     } else if (this.state === 'race') {
       if (code === 'Escape') { this.toMenu(); return; }
-      const slot = RESPAWN_KEYS.findIndex(keys => keys.includes(code));
-      const car = this.mode === 1 ? (slot >= 0 ? this.cars[0] : undefined) : this.cars[slot];
-      car?.respawn();
+      const respawnSlot = RESPAWN_KEYS.findIndex(keys => keys.includes(code));
+      if (respawnSlot >= 0) this.humanCar(respawnSlot)?.respawn();
+      const fireSlot = FIRE_KEYS.findIndex(keys => keys.includes(code));
+      if (fireSlot >= 0) { const car = this.humanCar(fireSlot); if (car) useItem(car); }
+      else if (code === 'Space' && this.mode === 1) useItem(this.cars[0]);
     } else if (this.state === 'finished') {
       if (code === 'Enter' || code === 'Space') this.startRace(this.mode);
       else if (code === 'KeyN') { this.newTrack(); this.startRace(this.mode); }
@@ -141,6 +156,7 @@ export class Game {
     this.applyCatchUp();
     for (const c of this.cars) c.update(this.clock, racing);
     if (this.cars.length === 2) collideCars(this.cars[0], this.cars[1]);
+    updatePickups(this.cars, this.track, racing);
     updateParticles(DT);
     updateShake(DT);
     if (this.toast && (this.toast.time -= DT) <= 0) this.toast = null;

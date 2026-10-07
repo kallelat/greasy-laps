@@ -2,6 +2,7 @@ import { CURB_W, DT, H, LAPS, W } from './config';
 import { NO_INPUT, readControls, type Controls } from './input';
 import { skidCtx } from './layers';
 import { spawnParticle, spawnSparks } from './particles';
+import { droppedOilsAt, TURBO_POWER, type Item } from './pickups';
 import { addShake } from './shake';
 import { CPU_SKILL, type CpuSkill } from './settings';
 import { sound, type CarVoice } from './sound';
@@ -52,6 +53,12 @@ export class Car {
   skill: CpuSkill = CPU_SKILL.normal;
   /** > 0 right after a respawn: the car is see-through and can't be hit. */
   ghost = 0;
+  /** Item picked up from a crate, waiting to be used. */
+  item: Item | null = null;
+  /** Seconds the current item has been held (the CPU uses it to decide when to fire). */
+  itemTime = 0;
+  /** > 0 while a turbo is burning. */
+  turbo = 0;
   /** Seconds spent driving backwards along the track. */
   private wrongWayTime = 0;
   /** Seconds spent (nearly) stationary during a race. */
@@ -122,7 +129,7 @@ export class Car {
 
     let throttle = 1, brake = 0;
     // A trailing CPU (catch-up boost) also dares to corner a little faster.
-    const limit = (360 - corner * 140) * this.skill.corner * (1 + this.boost);
+    const limit = (360 - corner * 140) * this.skill.corner * this.track.theme.cpuCorner * (1 + this.boost);
     if (speed > limit) { throttle = 0; if (speed > limit + 40) brake = 1; }
     if (Math.abs(diff) > 0.9 && speed > 150) throttle = 0;
     return { throttle, brake, steer: clamp(diff * 3, -1, 1) };
@@ -134,7 +141,8 @@ export class Car {
 
     // Surface checks.
     this.locate();
-    const inOil = this.track.oils.some(o => (this.x - o.x) ** 2 + (this.y - o.y) ** 2 < o.r * o.r);
+    const touches = (o: { x: number; y: number; r: number }) => (this.x - o.x) ** 2 + (this.y - o.y) ** 2 < o.r * o.r;
+    const inOil = (!this.onBridge && this.track.oils.some(touches)) || droppedOilsAt(this.onBridge).some(touches);
     if (inOil) {
       if (!this.inOil && !this.silent) sound.splat();
       this.oilTimer = 0.9;
@@ -150,9 +158,11 @@ export class Car {
 
     const onGrass = !this.onTrack;
     const power = (this.controller === 'cpu' ? this.skill.power : 1) * (1 + this.boost);
-    const accel = (onGrass ? 330 : 440) * power;      // more power also raises top speed
-    const drag = onGrass ? 2.6 : 1.05;             // terminal speed ≈ accel / drag
-    const grip = oily ? 0.5 : onGrass ? 3.2 : 4.2; // lateral grip (per second)
+    const surface = this.track.theme.surface;
+    const turbo = this.turbo > 0 ? TURBO_POWER : 0;
+    const accel = (onGrass ? surface.offAccel : 440) * power * (1 + turbo); // more power also raises top speed
+    const drag = onGrass ? surface.offDrag : 1.05;                          // terminal speed ≈ accel / drag
+    const grip = oily ? 0.5 : onGrass ? surface.offGrip : surface.roadGrip; // lateral grip (per second)
 
     if (ctl.throttle) vf += accel * ctl.throttle * DT;
     if (ctl.brake) vf -= (vf > 20 ? 620 : 260) * ctl.brake * DT;
@@ -184,7 +194,7 @@ export class Car {
     const wheels = this.wheelPositions();
     const hardBraking = ctl.brake > 0 && vf > 150;
     if (this.wheels && (this.slip > 70 || hardBraking)) {
-      skidCtx.strokeStyle = onGrass ? 'rgba(60,40,20,0.22)' : 'rgba(15,15,15,0.28)';
+      skidCtx.strokeStyle = onGrass ? this.track.theme.offroadSkid : 'rgba(15,15,15,0.28)';
       skidCtx.lineWidth = 3;
       skidCtx.lineCap = 'round';
       skidCtx.beginPath();
@@ -197,8 +207,13 @@ export class Car {
     this.wheels = wheels;
     const speed = Math.hypot(this.vx, this.vy);
     const wheel = wheels[Math.random() < 0.5 ? 0 : 1];
-    if (onGrass && speed > 60 && Math.random() < 0.5) spawnParticle(wheel, '#7a5a32');
+    if (onGrass && speed > 60 && Math.random() < 0.5) spawnParticle(wheel, this.track.theme.offroadDust);
     else if (!onGrass && this.slip > 120 && Math.random() < 0.35) spawnParticle(wheel, '#cfcfcf');
+    if (this.turbo > 0) {
+      this.turbo = Math.max(0, this.turbo - DT);
+      const exhaust = { x: this.x - Math.cos(this.h) * 18, y: this.y - Math.sin(this.h) * 18 };
+      spawnParticle(exhaust, Math.random() < 0.5 ? '#ffb347' : '#ff6a00');
+    }
 
     if (!this.finished && racing) {
       this.countLaps(now);

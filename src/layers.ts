@@ -185,7 +185,8 @@ function drawDecor(g: CanvasRenderingContext2D, track: Track, rng: Rng): void {
     }
     if (near) continue;
     if (track.theme.decor === 'pines') drawPine(g, x, y, r);
-    else if (track.theme.decor === 'cacti') variant < 0.55 ? drawCactus(g, x, y, r) : drawRock(g, x, y, r * 0.8);
+    else if (track.theme.decor === 'cacti' && variant < 0.55) drawCactus(g, x, y, r);
+    else if (track.theme.decor === 'cacti') drawRock(g, x, y, r * 0.8);
     else drawTree(g, x, y, r);
   }
 }
