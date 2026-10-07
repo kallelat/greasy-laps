@@ -29,7 +29,7 @@ function frame(now: number): void {
   acc += Math.min(0.1, (now - last) / 1000);
   last = now;
   while (acc >= DT) { game.step(); acc -= DT; }
-  renderer.draw(game);
+  renderer.draw(game, now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

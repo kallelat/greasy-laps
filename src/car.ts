@@ -3,6 +3,7 @@ import { NO_INPUT, readControls, type Controls } from './input';
 import { skidCtx } from './layers';
 import { spawnParticle, spawnSparks } from './particles';
 import { addShake } from './shake';
+import { CPU_SKILL, type CpuSkill } from './settings';
 import { sound, type CarVoice } from './sound';
 import type { Track } from './track';
 import { clamp, rand, roundRect, wrapAngle, type Vec } from './util';
@@ -21,6 +22,10 @@ export const CAR_DEFS: readonly CarDef[] = [
 ];
 
 const CAR_RADIUS = 14;
+/** How close the car's centre can get to a tyre wall. */
+const WALL_CLEARANCE = 12;
+const GHOST_TIME = 1.5;       // seconds without car-to-car collisions after a respawn
+const RESPAWN_COOLDOWN = 2;
 
 export class Car {
   x: number;
@@ -41,6 +46,17 @@ export class Car {
   oilTimer = 0;
   onTrack = true;
   slip = 0;
+  /** Catch-up bonus for the trailing car, 0..~0.12, set by the game each step. */
+  boost = 0;
+  /** CPU driving skill; only used when controller is 'cpu'. */
+  skill: CpuSkill = CPU_SKILL.normal;
+  /** > 0 right after a respawn: the car is see-through and can't be hit. */
+  ghost = 0;
+  /** Seconds spent driving backwards along the track. */
+  private wrongWayTime = 0;
+  /** Seconds spent (nearly) stationary during a race. */
+  private stuckTime = 0;
+  private respawnCooldown = 0;
 
   private wheels: [Vec, Vec] | null = null;
   private voice: CarVoice | null;
@@ -87,7 +103,7 @@ export class Car {
     this.cpuTimer -= DT;
     if (this.cpuTimer <= 0) {
       this.cpuTimer = rand(0.5, 1.5);
-      this.cpuOffset = rand(-0.18, 0.18) * TRACK_W;
+      this.cpuOffset = rand(-this.skill.wobble, this.skill.wobble) * TRACK_W;
     }
     const look = Math.round(10 + speed / 14);
     const t = pts[(this.idx + look) % n];
@@ -105,7 +121,8 @@ export class Car {
     if (this.stuckTimer > 0.6) return { throttle: 0, brake: 1, steer: -Math.sign(diff) };
 
     let throttle = 1, brake = 0;
-    const limit = 360 - corner * 140;
+    // A trailing CPU (catch-up boost) also dares to corner a little faster.
+    const limit = (360 - corner * 140) * this.skill.corner * (1 + this.boost);
     if (speed > limit) { throttle = 0; if (speed > limit + 40) brake = 1; }
     if (Math.abs(diff) > 0.9 && speed > 150) throttle = 0;
     return { throttle, brake, steer: clamp(diff * 3, -1, 1) };
@@ -132,7 +149,8 @@ export class Car {
     let vl = this.vx * rx + this.vy * ry;
 
     const onGrass = !this.onTrack;
-    const accel = onGrass ? 330 : 440;
+    const power = (this.controller === 'cpu' ? this.skill.power : 1) * (1 + this.boost);
+    const accel = (onGrass ? 330 : 440) * power;      // more power also raises top speed
     const drag = onGrass ? 2.6 : 1.05;             // terminal speed ≈ accel / drag
     const grip = oily ? 0.5 : onGrass ? 3.2 : 4.2; // lateral grip (per second)
 
@@ -158,6 +176,7 @@ export class Car {
     this.x += this.vx * DT;
     this.y += this.vy * DT;
 
+    this.collideWalls();
     this.bounceOffScreenEdges();
 
     // Skid marks & dust.
@@ -181,7 +200,12 @@ export class Car {
     if (onGrass && speed > 60 && Math.random() < 0.5) spawnParticle(wheel, '#7a5a32');
     else if (!onGrass && this.slip > 120 && Math.random() < 0.35) spawnParticle(wheel, '#cfcfcf');
 
-    if (!this.finished && racing) this.countLaps(now);
+    if (!this.finished && racing) {
+      this.countLaps(now);
+      this.trackRecovery(speed);
+    }
+    this.ghost = Math.max(0, this.ghost - DT);
+    this.respawnCooldown = Math.max(0, this.respawnCooldown - DT);
 
     if (this.voice) {
       sound.updateCarVoice(this.voice, {
@@ -201,6 +225,83 @@ export class Car {
     if (this.x > W - r) { this.wallHit(Math.abs(this.vx), { x: W, y: this.y }); this.x = W - r; this.vx = -Math.abs(this.vx) * 0.4; }
     if (this.y < r) { this.wallHit(Math.abs(this.vy), { x: this.x, y: 0 }); this.y = r; this.vy = Math.abs(this.vy) * 0.4; }
     if (this.y > H - r) { this.wallHit(Math.abs(this.vy), { x: this.x, y: H }); this.y = H - r; this.vy = -Math.abs(this.vy) * 0.4; }
+  }
+
+  /** Keep the car inside the tyre walls on either side of the track. */
+  private collideWalls(): void {
+    const { pts, n, wallRight, wallLeft } = this.track;
+    // The car moves less than one centerline point per step, so a small local search is enough.
+    let bi = this.idx, best = Infinity;
+    for (let k = -4; k <= 4; k++) {
+      const i = (this.idx + k + n) % n;
+      const d = (pts[i].x - this.x) ** 2 + (pts[i].y - this.y) ** 2;
+      if (d < best) { best = d; bi = i; }
+    }
+    const p = pts[bi];
+    const lateral = (this.x - p.x) * p.nx + (this.y - p.y) * p.ny;
+    const side = lateral >= 0 ? 1 : -1;
+    const wall = side > 0 ? wallRight[bi] : wallLeft[bi];
+    const pen = Math.abs(lateral) - (wall - WALL_CLEARANCE);
+    if (pen <= 0) return;
+
+    const ox = p.nx * side, oy = p.ny * side; // outward, towards the wall
+    this.x -= ox * pen;
+    this.y -= oy * pen;
+    const contact = { x: this.x + ox * WALL_CLEARANCE, y: this.y + oy * WALL_CLEARANCE };
+    const vn = this.vx * ox + this.vy * oy;
+    if (vn > 0) {
+      // Bounce off with a little energy, scrub some speed, and twist the car on glancing hits.
+      this.vx -= ox * vn * 1.4;
+      this.vy -= oy * vn * 1.4;
+      this.vx *= 0.9;
+      this.vy *= 0.9;
+      const tangential = this.vx * -oy + this.vy * ox;
+      this.av += clamp(tangential * vn * 0.00004, -2.5, 2.5) * side;
+      this.wallHit(vn, contact);
+    } else if (Math.hypot(this.vx, this.vy) > 150 && Math.random() < 0.15) {
+      // Grinding along the barrier.
+      spawnSparks(contact, { x: this.vx, y: this.vy }, 0);
+    }
+  }
+
+  /** Wrong-way and stuck detection; CPU cars respawn themselves when they get into trouble. */
+  private trackRecovery(speed: number): void {
+    const t = this.track.pts[this.idx];
+    const along = this.vx * Math.cos(t.ang) + this.vy * Math.sin(t.ang);
+    if (along < -40) this.wrongWayTime += DT;
+    else if (along > 20) this.wrongWayTime = 0;
+    this.stuckTime = speed < 20 ? this.stuckTime + DT : 0;
+    if (this.controller === 'cpu' && (this.stuckTime > 2.5 || this.wrongWayTime > 2.5)) this.respawn();
+  }
+
+  get wrongWay(): boolean {
+    return this.wrongWayTime > 0.8;
+  }
+
+  /** True when the player should be told about the respawn key. */
+  get needsHelp(): boolean {
+    return this.wrongWay || this.stuckTime > 1.5;
+  }
+
+  /** Put the car back on the centerline, a few metres behind where it was, facing the right way. */
+  respawn(): boolean {
+    if (this.finished || this.respawnCooldown > 0) return false;
+    const { pts, n } = this.track;
+    const back = 3;
+    const i = (this.idx - back + n) % n;
+    this.x = pts[i].x;
+    this.y = pts[i].y;
+    this.h = pts[i].ang;
+    this.vx = this.vy = this.av = 0;
+    this.idx = i;
+    this.progress -= back;
+    this.oilTimer = 0;
+    this.wrongWayTime = this.stuckTime = 0;
+    this.wheels = null; // no skid line across the map
+    this.ghost = GHOST_TIME;
+    this.respawnCooldown = RESPAWN_COOLDOWN;
+    if (!this.silent) { sound.beep(520, 0.08, 'triangle', 0.2); setTimeout(() => sound.beep(780, 0.12, 'triangle', 0.2), 80); }
+    return true;
   }
 
   /** Sound, sparks and shake for hitting a wall at `impact` px/s. */
@@ -264,6 +365,7 @@ export class Car {
 
   draw(g: CanvasRenderingContext2D): void {
     g.save();
+    if (this.ghost > 0) g.globalAlpha = 0.35 + 0.25 * Math.sin(this.ghost * 30);
     g.translate(this.x, this.y);
     g.rotate(this.h);
     // shadow
@@ -293,6 +395,7 @@ export class Car {
 }
 
 export function collideCars(a: Car, b: Car): void {
+  if (a.ghost > 0 || b.ghost > 0) return;
   const dx = b.x - a.x, dy = b.y - a.y;
   const dist = Math.hypot(dx, dy);
   const minD = 26;

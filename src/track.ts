@@ -17,7 +17,14 @@ export interface Track {
   pts: TrackPoint[];
   n: number;
   oils: Oil[];
+  /** Distance from the centerline to the tyre wall, per point, on the +normal (right) side. */
+  wallRight: number[];
+  /** Same, on the -normal (left) side. */
+  wallLeft: number[];
 }
+
+/** How far the tyre walls sit from the centerline when nothing else is nearby. */
+export const WALL_OFFSET = TRACK_W / 2 + CURB_W + 34;
 
 function catmullRom(p0: Vec, p1: Vec, p2: Vec, p3: Vec, t: number): Vec {
   const t2 = t * t, t3 = t2 * t;
@@ -143,5 +150,46 @@ export function generateTrack(): Track {
     oils.push({ i, x: pts[i].x + pts[i].nx * off, y: pts[i].y + pts[i].ny * off, r: rand(16, 24), seed: Math.random() * 1000 });
   }
 
-  return { pts, n, oils };
+  const [wallRight, wallLeft] = computeWalls(pts);
+  return { pts, n, oils, wallRight, wallLeft };
+}
+
+/**
+ * Place walls WALL_OFFSET from the centerline, pulled in wherever another part of the
+ * track (or the inside of a tight bend) is closer. Each wall point must be at least as
+ * far from every other centerline point as from its own, i.e. it never crosses the
+ * perpendicular bisector — so walls end up halfway between close sections.
+ */
+function computeWalls(pts: TrackPoint[]): [number[], number[]] {
+  const n = pts.length;
+  const right = new Array<number>(n).fill(WALL_OFFSET);
+  const left = new Array<number>(n).fill(WALL_OFFSET);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const dx = pts[j].x - p.x, dy = pts[j].y - p.y;
+      const along = dx * p.nx + dy * p.ny;
+      const d2 = dx * dx + dy * dy;
+      if (along > 1e-3) right[i] = Math.min(right[i], d2 / (2 * along));
+      else if (along < -1e-3) left[i] = Math.min(left[i], d2 / (-2 * along));
+    }
+  }
+  const minOff = TRACK_W / 2 + CURB_W + 4;
+  return [smoothWall(right, minOff), smoothWall(left, minOff)];
+}
+
+/** Min-filter then average, so walls stay clear of the track but don't zig-zag. */
+function smoothWall(off: number[], minOff: number): number[] {
+  const n = off.length, r = 3;
+  const mins = off.map((_, i) => {
+    let m = Infinity;
+    for (let k = -r; k <= r; k++) m = Math.min(m, off[(i + k + n) % n]);
+    return m;
+  });
+  return mins.map((_, i) => {
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += mins[(i + k + n) % n];
+    return Math.max(minOff, sum / (2 * r + 1));
+  });
 }

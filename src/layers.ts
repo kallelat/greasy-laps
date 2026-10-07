@@ -1,5 +1,5 @@
 import { CURB_W, H, TRACK_W, W } from './config';
-import type { Track, TrackPoint } from './track';
+import { WALL_OFFSET, type Track, type TrackPoint } from './track';
 import { rand } from './util';
 
 function makeCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
@@ -46,7 +46,7 @@ export function renderTrackLayer(track: Track): void {
     const x = rand(20, W - 20), y = rand(20, H - 20);
     let near = false;
     for (let i = 0; i < n; i += 3) {
-      if (Math.hypot(pts[i].x - x, pts[i].y - y) < TRACK_W / 2 + 50) { near = true; break; }
+      if (Math.hypot(pts[i].x - x, pts[i].y - y) < WALL_OFFSET + 26) { near = true; break; }
     }
     if (near) continue;
     const r = rand(10, 20);
@@ -123,6 +123,8 @@ export function renderTrackLayer(track: Track): void {
     g.restore();
   }
 
+  drawTyreWalls(g, track);
+
   // Oil slicks.
   for (const o of oils) {
     g.save();
@@ -146,5 +148,46 @@ export function renderTrackLayer(track: Track): void {
     g.fillStyle = grad;
     g.fill();
     g.restore();
+  }
+}
+
+const TYRE_R = 6;
+const TYRE_SPACING = 11.5;
+
+/** Stacks of tyres along both walls, painted in alternating red/white groups. */
+function drawTyreWalls(g: CanvasRenderingContext2D, track: Track): void {
+  const { pts, n } = track;
+  const tyres: { x: number; y: number; paint: string }[] = [];
+
+  for (const [side, offs] of [[1, track.wallRight], [-1, track.wallLeft]] as const) {
+    let travelled = TYRE_SPACING, count = 0;
+    let prev: { x: number; y: number } | null = null;
+    for (let i = 0; i <= n; i++) {
+      const p = pts[i % n], off = offs[i % n];
+      const q = { x: p.x + p.nx * side * off, y: p.y + p.ny * side * off };
+      if (prev) travelled += Math.hypot(q.x - prev.x, q.y - prev.y);
+      prev = q;
+      if (travelled < TYRE_SPACING) continue;
+      travelled = 0;
+      // Skip tyres that would sit closer to some other stretch of road than to their own.
+      let intrudes = false;
+      for (let j = 0; j < n; j += 2) {
+        if (Math.hypot(pts[j].x - q.x, pts[j].y - q.y) < off - 3) { intrudes = true; break; }
+      }
+      if (intrudes || q.x < 0 || q.x > W || q.y < 0 || q.y > H) continue;
+      tyres.push({ ...q, paint: Math.floor(count++ / 3) % 2 ? '#e8e8e8' : '#d32f2f' });
+    }
+  }
+
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  for (const t of tyres) { g.beginPath(); g.arc(t.x + 2, t.y + 3, TYRE_R, 0, Math.PI * 2); g.fill(); }
+  for (const t of tyres) {
+    g.fillStyle = '#1d1d1f';
+    g.beginPath(); g.arc(t.x, t.y, TYRE_R, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = t.paint;
+    g.lineWidth = 1.6;
+    g.beginPath(); g.arc(t.x, t.y, TYRE_R - 1.8, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#060606';
+    g.beginPath(); g.arc(t.x, t.y, 2.2, 0, Math.PI * 2); g.fill();
   }
 }

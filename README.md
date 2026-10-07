@@ -48,12 +48,15 @@ yarn dev           # dev server at http://localhost:5173
 | Accelerate        | `↑`          | `W`     |
 | Brake / reverse   | `↓`          | `S`     |
 | Steer             | `←` `→`      | `A` `D` |
+| Respawn           | Right `Shift` or `Enter` | Left `Shift` or `Q` |
 
 On the menu, press `1` for player vs CPU or `2` for two players on one keyboard. In player-vs-CPU mode, Red can use either the arrow keys or WASD.
 
 | Key     | Where          | Action                         |
 | ------- | -------------- | ------------------------------ |
 | `N`     | Menu, results  | Generate a new random track    |
+| `D`     | Menu           | CPU difficulty: Easy, Normal or Hard |
+| `C`     | Menu           | Turn catch-up on or off        |
 | `Enter` | Results        | Rematch on the same track      |
 | `Esc`   | In a race      | Back to the menu               |
 | `M`     | Anywhere       | Mute or unmute                 |
@@ -62,6 +65,11 @@ Tips:
 - Braking and steering together at speed throws the car into a slide.
 - Grass slows you down a lot, so stay on the asphalt.
 - Oil slicks take away almost all grip for about a second.
+- The track is lined with tyre walls. Hitting them hard bounces you off and costs speed.
+- If you spin out, get stuck or drive the wrong way, press your respawn key. You go back on the track a few metres behind where you were, see-through for 1.5 seconds so you can't be hit. You can respawn at most once every 2 seconds. CPU cars respawn on their own.
+- With **catch-up** on (the default), the trailing car gets up to 16% extra engine power, so races stay close. A trailing CPU also takes corners a bit faster.
+
+Difficulty and catch-up are saved in your browser.
 
 ## Project layout
 
@@ -76,6 +84,8 @@ src/
   sound.ts      Web Audio synth: engines, beeps, thuds
   input.ts      Keyboard state and per-player controls
   particles.ts  Dust and tyre smoke
+  settings.ts   CPU difficulty and catch-up settings (saved in localStorage)
+  shake.ts      Screen shake
   config.ts     Game title and tuning constants
 ```
 

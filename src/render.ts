@@ -1,4 +1,5 @@
 import { GAME_TITLE, H, LAPS, W } from './config';
+import { settings } from './settings';
 import type { Game } from './game';
 import { skidLayer, trackLayer } from './layers';
 import { drawParticles, drawSparks } from './particles';
@@ -15,7 +16,7 @@ function fmt(t: number | null | undefined): string {
 export class Renderer {
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
-  draw(game: Game): void {
+  draw(game: Game, now: number): void {
     const { ctx } = this;
     // Shake the world (not the HUD); the attract-mode demo behind the menu stays still.
     const shake = game.state === 'menu' ? { x: 0, y: 0 } : shakeOffset();
@@ -28,6 +29,7 @@ export class Renderer {
     drawParticles(ctx);
     for (const c of game.cars) c.draw(ctx);
     drawSparks(ctx);
+    if (game.state === 'race') this.drawCarWarnings(game, now);
     ctx.restore();
 
     if (game.state === 'menu') this.drawMenu();
@@ -76,18 +78,35 @@ export class Renderer {
     });
   }
 
+  /** Floating "WRONG WAY" and respawn hint above cars that are in trouble. */
+  private drawCarWarnings(game: Game, now: number): void {
+    const blink = Math.floor(now / 300) % 2 === 0;
+    game.cars.forEach((c, i) => {
+      if (!c.needsHelp || c.finished) return;
+      if (c.wrongWay && blink) this.text('WRONG WAY', c.x, c.y - 34, 20, '#ff5252');
+      if (c.controller !== 'cpu') {
+        const key = game.mode === 1 || i === 0 ? 'R-SHIFT' : 'L-SHIFT';
+        this.text(`${key}: respawn`, c.x, c.y + 32, 14, '#fff', 'center', '700');
+      }
+    });
+  }
+
   private drawMenu(): void {
     this.ctx.fillStyle = 'rgba(0,0,0,0.45)';
     this.ctx.fillRect(0, 0, W, H);
-    this.text(GAME_TITLE.toUpperCase(), W / 2, H / 2 - 170, 96, '#ffd54f');
-    this.text(`First to ${LAPS} laps wins`, W / 2, H / 2 - 95, 28, '#fff', 'center', '700');
+    this.text(GAME_TITLE.toUpperCase(), W / 2, H / 2 - 190, 96, '#ffd54f');
+    this.text(`First to ${LAPS} laps wins`, W / 2, H / 2 - 115, 28, '#fff', 'center', '700');
 
-    this.panel(W / 2 - 330, H / 2 - 55, 660, 250);
-    this.text('[1]  Player vs CPU', W / 2, H / 2 - 15, 34);
-    this.text('[2]  Two players', W / 2, H / 2 + 35, 34);
-    this.text('[N]  New random track', W / 2, H / 2 + 85, 26, '#ccc', 'center', '700');
-    this.text('RED: Arrow keys    BLUE: W A S D    ·    M: mute    ESC: menu', W / 2, H / 2 + 150, 18, '#aaa', 'center', '700');
-    this.text('Tip: brake + steer at speed to throw the car into a slide. Avoid the oil!', W / 2, H / 2 + 175, 16, '#888', 'center', '600');
+    this.panel(W / 2 - 360, H / 2 - 75, 720, 310);
+    this.text('[1]  Player vs CPU', W / 2, H / 2 - 35, 34);
+    this.text('[2]  Two players', W / 2, H / 2 + 15, 34);
+    this.text('[N]  New random track', W / 2, H / 2 + 62, 24, '#ccc', 'center', '700');
+    const diff = settings.difficulty.toUpperCase();
+    const catchUp = settings.catchUp ? 'ON' : 'OFF';
+    this.text(`[D]  CPU: ${diff}        [C]  Catch-up: ${catchUp}`, W / 2, H / 2 + 102, 22, '#ccc', 'center', '700');
+    this.text('RED: Arrows, R-Shift respawn    BLUE: WASD, L-Shift respawn', W / 2, H / 2 + 160, 18, '#aaa', 'center', '700');
+    this.text('M: mute    ESC: menu', W / 2, H / 2 + 184, 16, '#aaa', 'center', '700');
+    this.text('Tip: brake + steer at speed to throw the car into a slide. Avoid the oil!', W / 2, H / 2 + 210, 16, '#888', 'center', '600');
   }
 
   private drawCountdown(clock: number): void {
