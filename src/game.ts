@@ -2,8 +2,10 @@ import { Car, CAR_DEFS, collideCars } from './car';
 import { DT } from './config';
 import { clearSkids, renderTrackLayer } from './layers';
 import { clearParticles, updateParticles } from './particles';
+import { randomSeed } from './rng';
 import { CPU_SKILL, cycleDifficulty, settings, toggleCatchUp } from './settings';
 import { resetShake, updateShake } from './shake';
+import { copyTrackLink, setUrlSeed } from './share';
 import { sound } from './sound';
 import { generateTrack, type Track } from './track';
 import { clamp } from './util';
@@ -28,19 +30,38 @@ export class Game {
   cars: Car[] = [];
   clock = 0;               // seconds since race start (negative during countdown)
   winner: Car | null = null;
+  /** Short message shown at the bottom of the screen, e.g. "Link copied". */
+  toast: { text: string; time: number } | null = null;
   private lastBeep: number | null = null;
 
-  constructor() {
-    this.track = this.newTrack();
+  constructor(seed: number = randomSeed()) {
+    this.track = this.newTrack(seed);
     this.startDemo();
   }
 
-  private newTrack(): Track {
-    const track = generateTrack();
+  private newTrack(seed: number = randomSeed()): Track {
+    const track = generateTrack(seed);
     renderTrackLayer(track);
     clearSkids();
+    setUrlSeed(seed);
     this.track = track;
     return track;
+  }
+
+  /** Switch to a specific track (e.g. a shared link) and go back to the menu. */
+  loadTrack(seed: number): void {
+    if (seed === this.track.seed) return;
+    this.newTrack(seed);
+    this.toMenu();
+  }
+
+  private showToast(text: string): void {
+    this.toast = { text, time: 2.5 };
+  }
+
+  private async copyLink(): Promise<void> {
+    const ok = await copyTrackLink(this.track.seed);
+    this.showToast(ok ? `Link to track #${this.track.seed} copied` : `Share this track with code #${this.track.seed}`);
   }
 
   private resetScene(): void {
@@ -87,6 +108,7 @@ export class Game {
       else if (code === 'KeyN') { this.newTrack(); this.startDemo(); }
       else if (code === 'KeyD') cycleDifficulty();
       else if (code === 'KeyC') toggleCatchUp();
+      else if (code === 'KeyL') void this.copyLink();
     } else if (this.state === 'race') {
       if (code === 'Escape') { this.toMenu(); return; }
       const slot = RESPAWN_KEYS.findIndex(keys => keys.includes(code));
@@ -96,6 +118,7 @@ export class Game {
       if (code === 'Enter' || code === 'Space') this.startRace(this.mode);
       else if (code === 'KeyN') { this.newTrack(); this.startRace(this.mode); }
       else if (code === 'Escape') this.toMenu();
+      else if (code === 'KeyL') void this.copyLink();
     } else if (code === 'Escape') {
       this.toMenu();
     }
@@ -120,6 +143,7 @@ export class Game {
     if (this.cars.length === 2) collideCars(this.cars[0], this.cars[1]);
     updateParticles(DT);
     updateShake(DT);
+    if (this.toast && (this.toast.time -= DT) <= 0) this.toast = null;
 
     if (this.state === 'race') {
       const done = this.cars.filter(c => c.finished).sort((a, b) => a.finishTime - b.finishTime);

@@ -3,6 +3,8 @@ import { DT, GAME_TITLE, H, W } from './config';
 import { Game } from './game';
 import { onKeyPress } from './input';
 import { Renderer } from './render';
+import { parseSeed } from './rng';
+import { seedFromUrl } from './share';
 import { sound } from './sound';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -17,7 +19,13 @@ function resize(): void {
 addEventListener('resize', resize);
 resize();
 
-const game = new Game();
+const game = new Game(seedFromUrl() ?? undefined);
+
+// Pasting a track link (or editing the #code in the address bar) loads that track.
+addEventListener('hashchange', () => {
+  const seed = parseSeed(location.hash);
+  if (seed !== null) game.loadTrack(seed);
+});
 
 // Unlock audio before the game reacts, so the first race already has engine sounds.
 onKeyPress(() => sound.unlock());

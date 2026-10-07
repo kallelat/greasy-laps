@@ -2,6 +2,8 @@
 
 A top-down arcade racer for one or two players that runs in the browser. Every race is on a randomly generated track, and the first car to finish 5 laps wins.
 
+Tracks are loops or figure-eights with a bridge, with wider and narrower stretches. Each track has a code, such as `#482113`. Open the game at `…/#482113`, or press `L` to copy a link, and anyone gets exactly the same track.
+
 Built with TypeScript and an HTML canvas, bundled with [Vite](https://vite.dev). There are no runtime dependencies, and every sound is synthesized with the Web Audio API.
 
 ## Run it with Docker Compose
@@ -55,6 +57,7 @@ On the menu, press `1` for player vs CPU or `2` for two players on one keyboard.
 | Key     | Where          | Action                         |
 | ------- | -------------- | ------------------------------ |
 | `N`     | Menu, results  | Generate a new random track    |
+| `L`     | Menu, results  | Copy a link to the current track |
 | `D`     | Menu           | CPU difficulty: Easy, Normal or Hard |
 | `C`     | Menu           | Turn catch-up on or off        |
 | `Enter` | Results        | Rematch on the same track      |
@@ -65,6 +68,7 @@ Tips:
 - Braking and steering together at speed throws the car into a slide.
 - Grass slows you down a lot, so stay on the asphalt.
 - Oil slicks take away almost all grip for about a second.
+- On figure-eights, the cars on the bridge and the cars underneath can't hit each other.
 - The track is lined with tyre walls. Hitting them hard bounces you off and costs speed.
 - If you spin out, get stuck or drive the wrong way, press your respawn key. You go back on the track a few metres behind where you were, see-through for 1.5 seconds so you can't be hit. You can respawn at most once every 2 seconds. CPU cars respawn on their own.
 - With **catch-up** on (the default), the trailing car gets up to 16% extra engine power, so races stay close. A trailing CPU also takes corners a bit faster.
@@ -78,8 +82,10 @@ src/
   main.ts       Entry point: canvas setup and the fixed-timestep game loop
   game.ts       Game state machine (menu → countdown → race → finished)
   car.ts        Car physics, CPU driver, lap counting, car-to-car collisions
-  track.ts      Random track generation (spline loop + validity checks)
-  layers.ts     Pre-rendered scenery and the persistent skid-mark layer
+  track.ts      Track generation from a seed: loops, figure-eights, bridges, walls
+  rng.ts        Seeded random numbers, so a track code always gives the same track
+  share.ts      Track code in the URL and copy-link
+  layers.ts     Pre-rendered scenery, bridge deck and the persistent skid-mark layer
   render.ts     HUD, menus and the per-frame drawing
   sound.ts      Web Audio synth: engines, beeps, thuds
   input.ts      Keyboard state and per-player controls

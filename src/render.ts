@@ -1,7 +1,7 @@
 import { GAME_TITLE, H, LAPS, W } from './config';
 import { settings } from './settings';
 import type { Game } from './game';
-import { skidLayer, trackLayer } from './layers';
+import { bridgeLayer, skidLayer, trackLayer } from './layers';
 import { drawParticles, drawSparks } from './particles';
 import { shakeOffset } from './shake';
 import { sound } from './sound';
@@ -27,17 +27,26 @@ export class Renderer {
     ctx.drawImage(trackLayer, 0, 0);
     ctx.drawImage(skidLayer, 0, 0);
     drawParticles(ctx);
-    for (const c of game.cars) c.draw(ctx);
+    // Figure-eights: cars on the lower road go under the bridge deck, cars on the deck over it.
+    for (const c of game.cars) if (!c.onBridge) c.draw(ctx);
+    ctx.drawImage(bridgeLayer, 0, 0);
+    for (const c of game.cars) if (c.onBridge) c.draw(ctx);
     drawSparks(ctx);
     if (game.state === 'race') this.drawCarWarnings(game, now);
     ctx.restore();
 
-    if (game.state === 'menu') this.drawMenu();
+    if (game.state === 'menu') this.drawMenu(game);
     else {
       this.drawHud(game);
       if (game.state === 'countdown') this.drawCountdown(game.clock);
       if (game.state === 'race' && game.clock < 0.8) this.text('GO!', W / 2, H / 2, 160, '#66bb6a');
       if (game.state === 'finished') this.drawFinished(game);
+    }
+    this.text(this.trackLabel(game), 20, H - 20, 14, 'rgba(255,255,255,0.7)', 'left', '700');
+    if (game.toast) {
+      this.ctx.globalAlpha = Math.min(1, game.toast.time * 3);
+      this.text(game.toast.text, W / 2, H - 40, 22, '#fff', 'center', '700');
+      this.ctx.globalAlpha = 1;
     }
     if (sound.muted) this.text('MUTED', W - 20, H - 20, 14, '#aaa', 'right', '700');
   }
@@ -91,7 +100,12 @@ export class Renderer {
     });
   }
 
-  private drawMenu(): void {
+  private trackLabel(game: Game): string {
+    const kind = game.track.layout === 'figure8' ? '  ·  FIGURE-8' : '';
+    return `TRACK #${game.track.seed}${kind}`;
+  }
+
+  private drawMenu(game: Game): void {
     this.ctx.fillStyle = 'rgba(0,0,0,0.45)';
     this.ctx.fillRect(0, 0, W, H);
     this.text(GAME_TITLE.toUpperCase(), W / 2, H / 2 - 190, 96, '#ffd54f');
@@ -100,7 +114,7 @@ export class Renderer {
     this.panel(W / 2 - 360, H / 2 - 75, 720, 310);
     this.text('[1]  Player vs CPU', W / 2, H / 2 - 35, 34);
     this.text('[2]  Two players', W / 2, H / 2 + 15, 34);
-    this.text('[N]  New random track', W / 2, H / 2 + 62, 24, '#ccc', 'center', '700');
+    this.text(`[N]  New track      [L]  Copy link to track #${game.track.seed}`, W / 2, H / 2 + 62, 22, '#ccc', 'center', '700');
     const diff = settings.difficulty.toUpperCase();
     const catchUp = settings.catchUp ? 'ON' : 'OFF';
     this.text(`[D]  CPU: ${diff}        [C]  Catch-up: ${catchUp}`, W / 2, H / 2 + 102, 22, '#ccc', 'center', '700');
@@ -127,6 +141,6 @@ export class Renderer {
       const y = H / 2 + 20 + i * 36;
       this.text(`${c.def.name}  ·  laps ${Math.min(c.laps, LAPS)}/${LAPS}  ·  best lap ${fmt(c.best)}`, W / 2, y, 22, c.def.color, 'center', '700');
     });
-    this.text('ENTER: rematch    N: new track    ESC: menu', W / 2, H / 2 + 140, 22, '#ddd', 'center', '700');
+    this.text('ENTER: rematch    N: new track    L: copy link    ESC: menu', W / 2, H / 2 + 140, 22, '#ddd', 'center', '700');
   }
 }

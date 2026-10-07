@@ -1,11 +1,11 @@
-import { CURB_W, DT, H, LAPS, TRACK_W, W } from './config';
+import { CURB_W, DT, H, LAPS, W } from './config';
 import { NO_INPUT, readControls, type Controls } from './input';
 import { skidCtx } from './layers';
 import { spawnParticle, spawnSparks } from './particles';
 import { addShake } from './shake';
 import { CPU_SKILL, type CpuSkill } from './settings';
 import { sound, type CarVoice } from './sound';
-import type { Track } from './track';
+import { isOnBridge, isUnderBridge, type Track } from './track';
 import { clamp, rand, roundRect, wrapAngle, type Vec } from './util';
 
 export type Controller = 'arrows' | 'wasd' | 'arrows+wasd' | 'cpu';
@@ -61,7 +61,7 @@ export class Car {
   private wheels: [Vec, Vec] | null = null;
   private voice: CarVoice | null;
   private inOil = false;
-  private cpuOffset = 0;
+  private cpuOffset = 0;   // fraction of the track width
   private cpuTimer = 0;
   private stuckTimer = 0;
 
@@ -76,8 +76,8 @@ export class Car {
     const back = 6;
     const i = (n - back) % n;
     const side = slot === 0 ? -1 : 1;
-    this.x = pts[i].x + pts[i].nx * side * TRACK_W * 0.22;
-    this.y = pts[i].y + pts[i].ny * side * TRACK_W * 0.22;
+    this.x = pts[i].x + pts[i].nx * side * pts[i].w * 0.22;
+    this.y = pts[i].y + pts[i].ny * side * pts[i].w * 0.22;
     this.h = pts[i].ang;
     this.idx = i;
     this.progress = -back;
@@ -103,11 +103,11 @@ export class Car {
     this.cpuTimer -= DT;
     if (this.cpuTimer <= 0) {
       this.cpuTimer = rand(0.5, 1.5);
-      this.cpuOffset = rand(-this.skill.wobble, this.skill.wobble) * TRACK_W;
+      this.cpuOffset = rand(-this.skill.wobble, this.skill.wobble);
     }
     const look = Math.round(10 + speed / 14);
     const t = pts[(this.idx + look) % n];
-    const tx = t.x + t.nx * this.cpuOffset, ty = t.y + t.ny * this.cpuOffset;
+    const tx = t.x + t.nx * this.cpuOffset * t.w, ty = t.y + t.ny * this.cpuOffset * t.w;
     const want = Math.atan2(ty - this.y, tx - this.x);
     const diff = wrapAngle(want - this.h);
 
@@ -351,7 +351,7 @@ export class Car {
     this.progress += delta;
     this.idx = bi;
     this.dist = Math.sqrt(best);
-    this.onTrack = this.dist < TRACK_W / 2 + CURB_W * 0.6;
+    this.onTrack = this.dist < pts[bi].w / 2 + CURB_W * 0.6;
   }
 
   private wheelPositions(): [Vec, Vec] {
@@ -392,10 +392,21 @@ export class Car {
     g.fillRect(14, -6, 2, 3); g.fillRect(14, 3, 2, 3);
     g.restore();
   }
+
+  /** True while driving across the bridge deck of a figure-eight. */
+  get onBridge(): boolean {
+    return isOnBridge(this.track, this.idx);
+  }
+
+  get underBridge(): boolean {
+    return isUnderBridge(this.track, this.idx);
+  }
 }
 
 export function collideCars(a: Car, b: Car): void {
   if (a.ghost > 0 || b.ghost > 0) return;
+  // One on the bridge and one underneath it: different levels, no contact.
+  if ((a.onBridge && b.underBridge) || (a.underBridge && b.onBridge)) return;
   const dx = b.x - a.x, dy = b.y - a.y;
   const dist = Math.hypot(dx, dy);
   const minD = 26;
